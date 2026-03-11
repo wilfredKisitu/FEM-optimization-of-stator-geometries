@@ -1,0 +1,3 @@
+/home/wilfred/analytica/FEM/ptest/build/CMakeFiles/test.dir
+/home/wilfred/analytica/FEM/ptest/build/CMakeFiles/edit_cache.dir
+/home/wilfred/analytica/FEM/ptest/build/CMakeFiles/rebuild_cache.dir
