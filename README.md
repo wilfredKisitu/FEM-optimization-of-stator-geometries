@@ -16,7 +16,7 @@ The system combines:
 # System Overview
 
 The workflow begins in Python and transitions into a parallel C++ pipeline.
-
+"""
 GA Process (Python)
     │
     │  pybind11 / subprocess call
@@ -56,7 +56,7 @@ GeometryWorker::run(StatorParams p)
           ├── write .vtk  (thread B)
           └── write metadata.json (thread C)
 
-
+"""
 ---
 
 # Execution Pipeline
