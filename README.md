@@ -1,22 +1,3 @@
-# Concurrent Architecture
-
-This project implements a **high-performance concurrent pipeline** for generating stator geometries and meshes using **Python, C++, and GMSH**.  
-The architecture is designed for **large batch evaluation**, making it suitable for **genetic algorithms, optimization loops, and parametric design exploration**.
-
-The system combines:
-
-- Python orchestration
-- C++ compute kernels
-- Process-level parallelism
-- Thread-level concurrency
-- Asynchronous file export
-
----
-
-# System Overview
-
-The workflow begins in Python and transitions into a parallel C++ pipeline.
-"""
 GA Process (Python)
     │
     │  pybind11 / subprocess call
@@ -55,15 +36,3 @@ GeometryWorker::run(StatorParams p)
           ├── write .msh  (thread A)
           ├── write .vtk  (thread B)
           └── write metadata.json (thread C)
-
-"""
----
-
-# Execution Pipeline
-
-## 1. Python Entry Point
-
-The pipeline starts in Python:
-
-```python
-StatorPipeline.generate_batch(params_list)
