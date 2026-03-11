@@ -1,3 +1,4 @@
+```
 GA Process (Python)
     │
     │  pybind11 / subprocess call
@@ -36,3 +37,4 @@ GeometryWorker::run(StatorParams p)
           ├── write .msh  (thread A)
           ├── write .vtk  (thread B)
           └── write metadata.json (thread C)
+```
