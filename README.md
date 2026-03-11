@@ -27,6 +27,10 @@ A high-performance C++20 library for parametric finite-element mesh generation o
 7. [Output File Formats](#output-file-formats)
 8. [Testing](#testing)
 9. [Examples](#examples)
+   - [Single geometry (Python)](#single-geometry-python)
+   - [Batch sweep for a genetic algorithm](#batch-sweep-for-a-genetic-algorithm)
+   - [Direct C++ usage](#direct-c-usage)
+   - [3-D lamination stack extrusion](#3-d-lamination-stack-extrusion)
 
 ---
 
@@ -1240,7 +1244,7 @@ ctest --test-dir build --output-on-failure
 
 **Expected output:**
 ```
-=== Results: PASS=143 FAIL=0 ===
+=== Results: PASS=150 FAIL=0 ===
 ```
 
 Test groups and counts:
@@ -1253,6 +1257,7 @@ Test groups and counts:
 | `[MESH]` | 16 | Physical group assignment, size-field layers, algorithm settings, 3-D extrusion path |
 | `[EXPORT]` | 22 | SHA-256 correctness, stem derivation, all 4 format writers, async/sync consistency, `outputs_exist` |
 | `[BATCH]` | 10 | Fork dispatch, cancel flag, `skip_existing`, timeout path, summary JSON |
+| `[3D_EXTRUSION]` | 7 | Stack length computation, `layers_per_lam` config, 3-D element counts, VTK/JSON export of extruded mesh |
 | `[INTEGRATION]` | 10 | Full pipeline from `make_reference_params()` through export |
 
 The stub-backend warnings (`[stator] Warning: STATOR_WITH_GMSH not defined`) are expected and do not indicate test failures.
@@ -1360,3 +1365,196 @@ int main() {
     return mesh.success ? 0 : 1;
 }
 ```
+
+---
+
+### 3-D lamination stack extrusion
+
+The pipeline extends the 2-D cross-section into a full 3-D solid by sweeping the mesh through `n_lam` lamination layers. Set `n_lam > 1` in `StatorParams` and configure `MeshConfig::layers_per_lam` to control the axial element density.
+
+#### C++
+
+```cpp
+#include "stator/params.hpp"
+#include "stator/gmsh_backend.hpp"
+#include "stator/geometry_builder.hpp"
+#include "stator/topology_registry.hpp"
+#include "stator/mesh_generator.hpp"
+#include "stator/export_engine.hpp"
+
+using namespace stator;
+
+int main() {
+    // 1. Parameters — 36-slot SEMI_CLOSED DOUBLE_LAYER, 200-lamination stack
+    StatorParams p;
+    p.R_outer    = 0.25;
+    p.R_inner    = 0.15;
+    p.n_slots    = 36;
+    p.slot_shape = SlotShape::SEMI_CLOSED;
+    p.winding_type = WindingType::DOUBLE_LAYER;
+
+    // Lamination stack: 200 × 0.35 mm sheets, no inter-lamination gap
+    p.n_lam    = 200;
+    p.t_lam    = 0.00035;       // 0.35 mm per sheet
+    p.z_spacing = 0.0;           // sheets are pressed flush
+    p.material = LaminationMaterial::M270_35A;
+
+    p.validate_and_derive();
+    // p.stack_length is now 200 * 0.00035 = 0.07 m
+
+    // 2. Backend
+    auto backend = make_default_backend();
+    backend->initialize("stator_3d");
+
+    // 3. Geometry (2-D cross-section)
+    GeometryBuilder builder(backend.get());
+    auto geo = builder.build(p);
+    if (!geo.success) {
+        std::cerr << "Geometry error: " << geo.error_message << "\n";
+        return 1;
+    }
+
+    // 4. Topology
+    TopologyRegistry registry(p.n_slots);
+
+    // 5. Mesh — 3-D extrusion via MeshConfig
+    MeshConfig mc;
+    mc.algorithm_2d   = 5;   // Delaunay 2-D
+    mc.algorithm_3d   = 10;  // HXT (fast 3-D Delaunay)
+    mc.layers_per_lam = 2;   // 2 element layers per 0.35 mm lamination
+    mc.smoothing_passes = 3;
+
+    MeshGenerator mesher(backend.get(), mc);
+    auto mesh = mesher.generate(p, geo, registry);
+    if (!mesh.success) {
+        std::cerr << "Mesh error: " << mesh.error_message << "\n";
+        return 1;
+    }
+    std::cout << "3-D nodes: "    << mesh.n_nodes       << "\n"
+              << "2-D elements: " << mesh.n_elements_2d << "\n"
+              << "3-D elements: " << mesh.n_elements_3d << "\n"
+              << "Avg quality:  " << mesh.avg_quality   << "\n";
+
+    // 6. Export — MSH v4, VTK (for ParaView), JSON metadata
+    ExportConfig cfg;
+    cfg.output_dir  = "/tmp/stator_3d";
+    cfg.formats     = ExportFormat::MSH | ExportFormat::VTK | ExportFormat::JSON;
+    cfg.msh_version = 4;
+
+    ExportEngine exporter(backend.get());
+    auto results = exporter.write_all_sync(p, mesh, cfg);
+    for (auto& r : results)
+        if (r.success)
+            std::cout << "Wrote: " << r.path << "\n";
+        else
+            std::cerr << "Export failed: " << r.error_message << "\n";
+
+    backend->finalize();
+    return mesh.success ? 0 : 1;
+}
+```
+
+**Key points:**
+
+| Parameter | Effect |
+|-----------|--------|
+| `n_lam = 200` | Sweep produces 200 lamination layers along Z |
+| `t_lam = 0.00035` | Each sheet is 0.35 mm thick; `stack_length = n_lam * t_lam` |
+| `z_spacing = 0.0` | No axial gap between sheets (set to insulation coating thickness for realistic models) |
+| `mc.layers_per_lam = 2` | 2 prism/hex element rows per lamination → 400 axial element layers total |
+| `mc.algorithm_3d = 10` | HXT algorithm — fastest for large 3-D tetrahedral meshes |
+| `ExportFormat::VTK` | Produces a `.vtk` file readable by ParaView and pyvista |
+
+#### Python
+
+```python
+from stator_pipeline import StatorConfig, generate_single
+from stator_pipeline.visualiser import StatorVisualiser
+
+# ── 1. Configure a 3-D laminated stator ──────────────────────────────────────
+cfg = StatorConfig(
+    # Cross-section geometry
+    R_outer         = 0.25,
+    R_inner         = 0.15,
+    n_slots         = 36,
+    slot_shape      = "SEMI_CLOSED",
+    winding_type    = "DOUBLE_LAYER",
+    slot_depth      = 0.06,
+    slot_width_outer= 0.012,
+    slot_width_inner= 0.010,
+    slot_opening    = 0.004,
+    slot_opening_depth = 0.003,
+
+    # Lamination stack (triggers 3-D extrusion)
+    n_lam    = 200,         # 200 sheets → stack_length = 0.07 m
+    t_lam    = 0.00035,     # 0.35 mm per lamination
+    z_spacing = 0.0,        # pressed flush (no inter-lamination gap)
+    material = "M270_35A",
+
+    # Mesh sizing
+    mesh_yoke  = 0.006,
+    mesh_slot  = 0.003,
+    mesh_coil  = 0.0015,
+    mesh_ins   = 0.0007,
+    mesh_boundary_layers = 3,
+)
+
+# ── 2. Generate mesh (MSH + VTK + JSON) ──────────────────────────────────────
+result = generate_single(
+    cfg,
+    output_dir = "/tmp/stator_3d",
+    formats    = "MSH|VTK|JSON",
+)
+
+if not result["success"]:
+    raise RuntimeError(f"Pipeline failed: {result['error']}")
+
+print(f"MSH  : {result['msh_path']}")
+print(f"VTK  : {result['vtk_path']}")
+print(f"JSON : {result['json_path']}")
+
+import json
+with open(result["json_path"]) as f:
+    meta = json.load(f)
+stats = meta["mesh_stats"]
+print(f"Nodes      : {stats['n_nodes']}")
+print(f"2-D elems  : {stats['n_elements_2d']}")
+print(f"3-D elems  : {stats['n_elements_3d']}")
+print(f"Avg quality: {stats['avg_quality']:.3f}")
+
+# ── 3. Visualise cross-section (matplotlib, 2-D slice) ───────────────────────
+vis = StatorVisualiser()
+vis.plot_cross_section(result["vtk_path"], output_png="/tmp/stator_3d_section.png")
+
+# ── 4. Visualise full 3-D volume (pyvista) ───────────────────────────────────
+try:
+    import pyvista as pv
+
+    grid = pv.read(result["vtk_path"])
+
+    # Colour cells by region type (physical group tag stored as scalar)
+    plotter = pv.Plotter()
+    plotter.add_mesh(
+        grid,
+        scalars    = grid.cell_data.keys()[0],  # first scalar = RegionType tag
+        cmap       = "tab20",
+        show_edges = False,
+        opacity    = 0.9,
+    )
+    plotter.add_scalar_bar("Region tag")
+    plotter.show_axes()
+    plotter.show(title="Stator — 3-D lamination stack")
+
+except ImportError:
+    print("pyvista not installed; skipping interactive 3-D view.")
+    print("Install with:  pip install pyvista")
+```
+
+**3-D visualisation options:**
+
+| Tool | Install | Usage |
+|------|---------|-------|
+| **pyvista** | `pip install pyvista` | Interactive 3-D viewer in Python; reads `.vtk` directly |
+| **ParaView** | [paraview.org](https://www.paraview.org) | GUI viewer; open the `.vtk` or `.msh` file |
+| **GMSH GUI** | Built-in when `STATOR_WITH_GMSH=ON` | `gmsh /tmp/stator_3d/stator_<hash>.msh` |
+| **matplotlib** | `pip install matplotlib` | 2-D cross-section slice via `StatorVisualiser.plot_cross_section()` |

@@ -1562,6 +1562,156 @@ TEST(batch_empty_job_list_returns_empty_result) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// [3D_EXTRUSION] tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(extrusion_3d_stack_length_matches_params) {
+    // stack_length = n_lam * t_lam + (n_lam - 1) * z_spacing
+    auto p = make_reference_params();
+    p.n_lam    = 100;
+    p.t_lam    = 0.00035;
+    p.z_spacing = 0.00005;
+    p.validate_and_derive();
+    double expected = 100 * 0.00035 + 99 * 0.00005;
+    EXPECT_NEAR(p.stack_length, expected, 1e-9);
+    PASS();
+}
+
+TEST(extrusion_3d_layers_per_lam_config_accepted) {
+    // MeshConfig.layers_per_lam can be set and is not zero by default
+    MeshConfig cfg;
+    cfg.layers_per_lam = 4;
+    EXPECT(cfg.layers_per_lam == 4);
+    PASS();
+}
+
+TEST(extrusion_3d_n_elements_3d_positive_when_n_lam_gt_1) {
+    // Full 3-D extrusion: n_lam > 1 produces a nonzero 3-D element count.
+    StubGmshBackend stub;
+    GeometryBuilder builder(&stub);
+    auto p = make_reference_params();
+    p.n_lam = 10;
+    p.validate_and_derive();
+    auto geo = builder.build(p);
+    EXPECT(geo.success);
+    TopologyRegistry reg(p.n_slots);
+    MeshConfig mc;
+    mc.layers_per_lam = 2;
+    MeshGenerator mesher(&stub, mc);
+    auto result = mesher.generate(p, geo, reg);
+    EXPECT(result.success);
+    EXPECT(result.n_elements_3d > 0);
+    PASS();
+}
+
+TEST(extrusion_3d_n_elements_3d_zero_when_n_lam_is_1) {
+    // With a single lamination the pipeline stays 2-D only.
+    StubGmshBackend stub;
+    GeometryBuilder builder(&stub);
+    auto p = make_reference_params();
+    p.n_lam = 1;
+    p.validate_and_derive();
+    auto geo = builder.build(p);
+    TopologyRegistry reg(p.n_slots);
+    MeshGenerator mesher(&stub);
+    auto result = mesher.generate(p, geo, reg);
+    EXPECT(result.success);
+    EXPECT(result.n_elements_3d == 0);
+    PASS();
+}
+
+TEST(extrusion_3d_vtk_export_produces_correct_extension) {
+    // After 3-D meshing, the VTK export path ends in ".vtk".
+    StubGmshBackend stub;
+    GeometryBuilder builder(&stub);
+    auto p = make_reference_params();
+    p.n_lam = 5;
+    p.validate_and_derive();
+    auto geo = builder.build(p);
+    TopologyRegistry reg(p.n_slots);
+    MeshGenerator mesher(&stub);
+    auto mesh = mesher.generate(p, geo, reg);
+    EXPECT(mesh.success);
+
+    ExportEngine engine(&stub);
+    std::string tmp = std::filesystem::temp_directory_path().string() + "/stator_3d_vtk";
+    std::filesystem::create_directories(tmp);
+    ExportConfig cfg;
+    cfg.formats    = ExportFormat::VTK;
+    cfg.output_dir = tmp;
+    auto results = engine.write_all_sync(p, mesh, cfg);
+    EXPECT(!results.empty());
+    EXPECT(results[0].success);
+    EXPECT(results[0].path.size() > 4);
+    EXPECT(results[0].path.substr(results[0].path.size() - 4) == ".vtk");
+    PASS();
+}
+
+TEST(extrusion_3d_json_contains_n_elements_3d_key) {
+    // The metadata JSON produced for a 3-D mesh contains "n_elements_3d".
+    StubGmshBackend stub;
+    GeometryBuilder builder(&stub);
+    auto p = make_reference_params();
+    p.n_lam = 5;
+    p.validate_and_derive();
+    auto geo = builder.build(p);
+    TopologyRegistry reg(p.n_slots);
+    MeshGenerator mesher(&stub);
+    auto mesh = mesher.generate(p, geo, reg);
+    EXPECT(mesh.success);
+
+    ExportEngine engine(&stub);
+    std::string tmp = std::filesystem::temp_directory_path().string() + "/stator_3d_json";
+    std::filesystem::create_directories(tmp);
+    ExportConfig cfg;
+    cfg.formats    = ExportFormat::JSON;
+    cfg.output_dir = tmp;
+    auto results = engine.write_all_sync(p, mesh, cfg);
+    EXPECT(!results.empty() && results[0].success);
+
+    std::ifstream f(results[0].path);
+    std::string content((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+    EXPECT(content.find("n_elements_3d") != std::string::npos);
+    PASS();
+}
+
+TEST(extrusion_3d_full_pipeline_with_all_exports) {
+    // End-to-end: build geometry, 3-D mesh, export MSH + VTK + JSON.
+    StubGmshBackend stub;
+    stub.initialize("3d_full");
+    GeometryBuilder builder(&stub);
+    auto p = make_reference_params();
+    p.n_lam = 8;
+    p.t_lam = 0.00035;
+    p.validate_and_derive();
+    auto geo = builder.build(p);
+    EXPECT(geo.success);
+
+    TopologyRegistry reg(p.n_slots);
+    MeshConfig mc;
+    mc.layers_per_lam = 2;
+    mc.algorithm_3d   = 10; // HXT
+    MeshGenerator mesher(&stub, mc);
+    auto mesh = mesher.generate(p, geo, reg);
+    EXPECT(mesh.success);
+    EXPECT(mesh.n_elements_3d > 0);
+
+    ExportEngine engine(&stub);
+    std::string tmp = std::filesystem::temp_directory_path().string() + "/stator_3d_full";
+    std::filesystem::create_directories(tmp);
+    ExportConfig cfg;
+    cfg.formats    = ExportFormat::MSH | ExportFormat::VTK | ExportFormat::JSON;
+    cfg.output_dir = tmp;
+    auto results = engine.write_all_sync(p, mesh, cfg);
+    EXPECT(results.size() == 3);
+    for (auto& r : results)
+        EXPECT(r.success);
+    stub.finalize();
+    PASS();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // [INTEGRATION] tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1849,6 +1999,15 @@ int main() {
     RUN(batch_progress_callback_not_invoked_in_execute_job);
     RUN(batch_cancel_flag_prevents_new_forks);
     RUN(batch_empty_job_list_returns_empty_result);
+
+    // [3D_EXTRUSION]
+    RUN(extrusion_3d_stack_length_matches_params);
+    RUN(extrusion_3d_layers_per_lam_config_accepted);
+    RUN(extrusion_3d_n_elements_3d_positive_when_n_lam_gt_1);
+    RUN(extrusion_3d_n_elements_3d_zero_when_n_lam_is_1);
+    RUN(extrusion_3d_vtk_export_produces_correct_extension);
+    RUN(extrusion_3d_json_contains_n_elements_3d_key);
+    RUN(extrusion_3d_full_pipeline_with_all_exports);
 
     // [INTEGRATION]
     RUN(integration_full_pipeline_semi_closed_double_layer);
