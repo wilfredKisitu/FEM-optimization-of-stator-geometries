@@ -42,5 +42,7 @@ set(CMAKE_MAKEFILE_PRODUCTS
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/stator_c_core.dir/DependInfo.cmake"
   "CMakeFiles/test_stator_c.dir/DependInfo.cmake"
+  "CMakeFiles/single_geometry_c.dir/DependInfo.cmake"
+  "CMakeFiles/batch_scheduler_c.dir/DependInfo.cmake"
   "CMakeFiles/integration_test.dir/DependInfo.cmake"
   )

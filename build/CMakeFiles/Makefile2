@@ -65,6 +65,8 @@ CMAKE_BINARY_DIR = /home/wilfred/analytica/FEM/build
 # The main recursive "all" target.
 all: CMakeFiles/stator_c_core.dir/all
 all: CMakeFiles/test_stator_c.dir/all
+all: CMakeFiles/single_geometry_c.dir/all
+all: CMakeFiles/batch_scheduler_c.dir/all
 all: CMakeFiles/integration_test.dir/all
 .PHONY : all
 
@@ -75,6 +77,8 @@ preinstall:
 # The main recursive "clean" target.
 clean: CMakeFiles/stator_c_core.dir/clean
 clean: CMakeFiles/test_stator_c.dir/clean
+clean: CMakeFiles/single_geometry_c.dir/clean
+clean: CMakeFiles/batch_scheduler_c.dir/clean
 clean: CMakeFiles/integration_test.dir/clean
 .PHONY : clean
 
@@ -85,7 +89,7 @@ clean: CMakeFiles/integration_test.dir/clean
 CMakeFiles/stator_c_core.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/stator_c_core.dir/build.make CMakeFiles/stator_c_core.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/stator_c_core.dir/build.make CMakeFiles/stator_c_core.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=3,4,5,6,7,8,9,10 "Built target stator_c_core"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=7,8,9,10,11,12,13,14 "Built target stator_c_core"
 .PHONY : CMakeFiles/stator_c_core.dir/all
 
 # Build rule for subdir invocation for target.
@@ -111,7 +115,7 @@ CMakeFiles/stator_c_core.dir/clean:
 CMakeFiles/test_stator_c.dir/all: CMakeFiles/stator_c_core.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator_c.dir/build.make CMakeFiles/test_stator_c.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator_c.dir/build.make CMakeFiles/test_stator_c.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=11,12 "Built target test_stator_c"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=15,16 "Built target test_stator_c"
 .PHONY : CMakeFiles/test_stator_c.dir/all
 
 # Build rule for subdir invocation for target.
@@ -131,13 +135,65 @@ CMakeFiles/test_stator_c.dir/clean:
 .PHONY : CMakeFiles/test_stator_c.dir/clean
 
 #=============================================================================
+# Target rules for target CMakeFiles/single_geometry_c.dir
+
+# All Build rule for target.
+CMakeFiles/single_geometry_c.dir/all: CMakeFiles/stator_c_core.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=5,6 "Built target single_geometry_c"
+.PHONY : CMakeFiles/single_geometry_c.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/single_geometry_c.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/wilfred/analytica/FEM/build/CMakeFiles 10
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/single_geometry_c.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/wilfred/analytica/FEM/build/CMakeFiles 0
+.PHONY : CMakeFiles/single_geometry_c.dir/rule
+
+# Convenience name for target.
+single_geometry_c: CMakeFiles/single_geometry_c.dir/rule
+.PHONY : single_geometry_c
+
+# clean rule for target.
+CMakeFiles/single_geometry_c.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/clean
+.PHONY : CMakeFiles/single_geometry_c.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/batch_scheduler_c.dir
+
+# All Build rule for target.
+CMakeFiles/batch_scheduler_c.dir/all: CMakeFiles/stator_c_core.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=1,2 "Built target batch_scheduler_c"
+.PHONY : CMakeFiles/batch_scheduler_c.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/batch_scheduler_c.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/wilfred/analytica/FEM/build/CMakeFiles 10
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/batch_scheduler_c.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/wilfred/analytica/FEM/build/CMakeFiles 0
+.PHONY : CMakeFiles/batch_scheduler_c.dir/rule
+
+# Convenience name for target.
+batch_scheduler_c: CMakeFiles/batch_scheduler_c.dir/rule
+.PHONY : batch_scheduler_c
+
+# clean rule for target.
+CMakeFiles/batch_scheduler_c.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/clean
+.PHONY : CMakeFiles/batch_scheduler_c.dir/clean
+
+#=============================================================================
 # Target rules for target CMakeFiles/integration_test.dir
 
 # All Build rule for target.
 CMakeFiles/integration_test.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=1,2 "Built target integration_test"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/wilfred/analytica/FEM/build/CMakeFiles --progress-num=3,4 "Built target integration_test"
 .PHONY : CMakeFiles/integration_test.dir/all
 
 # Build rule for subdir invocation for target.

@@ -1,5 +1,7 @@
 /home/wilfred/analytica/FEM/build/CMakeFiles/stator_c_core.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/test_stator_c.dir
+/home/wilfred/analytica/FEM/build/CMakeFiles/single_geometry_c.dir
+/home/wilfred/analytica/FEM/build/CMakeFiles/batch_scheduler_c.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/integration_test.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/test.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/edit_cache.dir

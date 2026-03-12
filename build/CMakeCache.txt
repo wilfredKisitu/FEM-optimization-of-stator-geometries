@@ -236,6 +236,9 @@ GMSH_INCLUDE_DIR:PATH=/usr/include
 //GMSH shared library
 GMSH_LIB:FILEPATH=/usr/lib/x86_64-linux-gnu/libgmsh.so
 
+//Build C example executables
+STATOR_BUILD_EXAMPLES:BOOL=ON
+
 //Build 3-D GMSH integration test
 STATOR_BUILD_INTEGRATION:BOOL=ON
 

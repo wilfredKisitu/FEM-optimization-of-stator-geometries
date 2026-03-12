@@ -142,7 +142,7 @@ int stator_mesh_generate(MeshGenerator* mg,
 
     if (!geo->success) {
         snprintf(result->error_message, sizeof(result->error_message),
-                 "Geometry build failed: %s", geo->error_message);
+                 "Geometry build failed: %.480s", geo->error_message);
         return STATOR_ERR_LOGIC;
     }
 

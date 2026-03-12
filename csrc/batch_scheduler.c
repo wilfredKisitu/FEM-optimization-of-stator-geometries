@@ -54,7 +54,7 @@ int stator_batch_execute_job(const BatchJob* job, const char* status_path) {
         GeometryBuildResult geo;
         if (stator_geom_build(&gb, &mj.params, &geo) != STATOR_OK || !geo.success) {
             snprintf(error_msg, sizeof(error_msg),
-                     "Geometry build failed: %s", geo.error_message);
+                     "Geometry build failed: %.480s", geo.error_message);
             stub_gmsh_backend_free(backend);
             goto write_status;
         }

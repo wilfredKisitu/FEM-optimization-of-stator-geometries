@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/batch_scheduler_c.dir/examples/batch_scheduler_c.c.o -o batch_scheduler_c  -Wl,-rpath,/home/wilfred/analytica/FEM/build libstator_c_core.so -lm -lpthread 

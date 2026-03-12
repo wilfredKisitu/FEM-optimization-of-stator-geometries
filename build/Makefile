@@ -153,6 +153,32 @@ test_stator_c/fast:
 .PHONY : test_stator_c/fast
 
 #=============================================================================
+# Target rules for targets named single_geometry_c
+
+# Build rule for target.
+single_geometry_c: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 single_geometry_c
+.PHONY : single_geometry_c
+
+# fast build rule for target.
+single_geometry_c/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/build
+.PHONY : single_geometry_c/fast
+
+#=============================================================================
+# Target rules for targets named batch_scheduler_c
+
+# Build rule for target.
+batch_scheduler_c: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 batch_scheduler_c
+.PHONY : batch_scheduler_c
+
+# fast build rule for target.
+batch_scheduler_c/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/build
+.PHONY : batch_scheduler_c/fast
+
+#=============================================================================
 # Target rules for targets named integration_test
 
 # Build rule for target.
@@ -333,6 +359,54 @@ csrc/topology_registry.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/stator_c_core.dir/build.make CMakeFiles/stator_c_core.dir/csrc/topology_registry.c.s
 .PHONY : csrc/topology_registry.c.s
 
+examples/batch_scheduler_c.o: examples/batch_scheduler_c.c.o
+.PHONY : examples/batch_scheduler_c.o
+
+# target to build an object file
+examples/batch_scheduler_c.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/examples/batch_scheduler_c.c.o
+.PHONY : examples/batch_scheduler_c.c.o
+
+examples/batch_scheduler_c.i: examples/batch_scheduler_c.c.i
+.PHONY : examples/batch_scheduler_c.i
+
+# target to preprocess a source file
+examples/batch_scheduler_c.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/examples/batch_scheduler_c.c.i
+.PHONY : examples/batch_scheduler_c.c.i
+
+examples/batch_scheduler_c.s: examples/batch_scheduler_c.c.s
+.PHONY : examples/batch_scheduler_c.s
+
+# target to generate assembly for a file
+examples/batch_scheduler_c.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/batch_scheduler_c.dir/build.make CMakeFiles/batch_scheduler_c.dir/examples/batch_scheduler_c.c.s
+.PHONY : examples/batch_scheduler_c.c.s
+
+examples/single_geometry_c.o: examples/single_geometry_c.c.o
+.PHONY : examples/single_geometry_c.o
+
+# target to build an object file
+examples/single_geometry_c.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/examples/single_geometry_c.c.o
+.PHONY : examples/single_geometry_c.c.o
+
+examples/single_geometry_c.i: examples/single_geometry_c.c.i
+.PHONY : examples/single_geometry_c.i
+
+# target to preprocess a source file
+examples/single_geometry_c.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/examples/single_geometry_c.c.i
+.PHONY : examples/single_geometry_c.c.i
+
+examples/single_geometry_c.s: examples/single_geometry_c.c.s
+.PHONY : examples/single_geometry_c.s
+
+# target to generate assembly for a file
+examples/single_geometry_c.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/single_geometry_c.dir/build.make CMakeFiles/single_geometry_c.dir/examples/single_geometry_c.c.s
+.PHONY : examples/single_geometry_c.c.s
+
 tests/integration_test.o: tests/integration_test.c.o
 .PHONY : tests/integration_test.o
 
@@ -390,7 +464,9 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... test"
+	@echo "... batch_scheduler_c"
 	@echo "... integration_test"
+	@echo "... single_geometry_c"
 	@echo "... stator_c_core"
 	@echo "... test_stator_c"
 	@echo "... csrc/batch_scheduler.o"
@@ -414,6 +490,12 @@ help:
 	@echo "... csrc/topology_registry.o"
 	@echo "... csrc/topology_registry.i"
 	@echo "... csrc/topology_registry.s"
+	@echo "... examples/batch_scheduler_c.o"
+	@echo "... examples/batch_scheduler_c.i"
+	@echo "... examples/batch_scheduler_c.s"
+	@echo "... examples/single_geometry_c.o"
+	@echo "... examples/single_geometry_c.i"
+	@echo "... examples/single_geometry_c.s"
 	@echo "... tests/integration_test.o"
 	@echo "... tests/integration_test.i"
 	@echo "... tests/integration_test.s"

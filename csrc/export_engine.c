@@ -123,14 +123,24 @@ bool stator_export_outputs_exist(const StatorParams* p, const ExportConfig* cfg)
 
 /* ── Format writers ─────────────────────────────────────────────────────── */
 
+/* Build a file path in a local 1024-byte buffer, then copy into the 512-byte
+ * r.path field.  This avoids -Wformat-truncation when output_dir is large. */
+#define MAKE_PATH(dst, dir, stem, ext) do { \
+    char _tmp[1024]; \
+    snprintf(_tmp, sizeof(_tmp), "%s/%s%s", (dir), (stem), (ext)); \
+    _tmp[sizeof(_tmp)-1] = '\0'; \
+    strncpy((dst), _tmp, 511); (dst)[511] = '\0'; \
+} while(0)
+
 static ExportResult write_msh(ExportEngine* ee, const StatorParams* p,
                                 const ExportConfig* cfg, const char* stem) {
+    (void)p;
     ExportResult r;
     memset(&r, 0, sizeof(r));
     r.format = EXPORT_MSH;
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    snprintf(r.path, sizeof(r.path), "%s/%s.msh", cfg->output_dir, stem);
+    MAKE_PATH(r.path, cfg->output_dir, stem, ".msh");
     gmsh_write_mesh(ee->backend, r.path);
     r.success = true;
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -147,11 +157,11 @@ static ExportResult write_vtk(const StatorParams* p, const MeshResult* mesh,
     r.format = EXPORT_VTK;
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    snprintf(r.path, sizeof(r.path), "%s/%s.vtk", cfg->output_dir, stem);
+    MAKE_PATH(r.path, cfg->output_dir, stem, ".vtk");
     FILE* f = fopen(r.path, "w");
     if (!f) {
-        snprintf(r.error_message, sizeof(r.error_message),
-                 "Cannot open %s", r.path);
+        snprintf(r.error_message, sizeof(r.error_message) - 1,
+                 "Cannot open %.480s", r.path);
         goto done;
     }
     fprintf(f, "# vtk DataFile Version 3.0\n"
@@ -179,11 +189,11 @@ static ExportResult write_hdf5(const StatorParams* p, const MeshResult* mesh,
     r.format = EXPORT_HDF5;
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    snprintf(r.path, sizeof(r.path), "%s/%s.h5", cfg->output_dir, stem);
+    MAKE_PATH(r.path, cfg->output_dir, stem, ".h5");
     FILE* f = fopen(r.path, "w");
     if (!f) {
-        snprintf(r.error_message, sizeof(r.error_message),
-                 "Cannot open %s", r.path);
+        snprintf(r.error_message, sizeof(r.error_message) - 1,
+                 "Cannot open %.480s", r.path);
         goto done;
     }
     fprintf(f, "HDF5 placeholder for %s\nn_nodes=%d\nn_elements_2d=%d\n",
@@ -204,11 +214,11 @@ static ExportResult write_json(const StatorParams* p, const MeshResult* mesh,
     r.format = EXPORT_JSON;
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    snprintf(r.path, sizeof(r.path), "%s/%s_meta.json", cfg->output_dir, stem);
+    MAKE_PATH(r.path, cfg->output_dir, stem, "_meta.json");
     FILE* f = fopen(r.path, "w");
     if (!f) {
-        snprintf(r.error_message, sizeof(r.error_message),
-                 "Cannot open %s", r.path);
+        snprintf(r.error_message, sizeof(r.error_message) - 1,
+                 "Cannot open %.480s", r.path);
         goto done;
     }
     char json_buf[8192];

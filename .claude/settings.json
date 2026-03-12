@@ -7,7 +7,10 @@
       "Read(//usr/local/include/**)",
       "Read(//usr/**)",
       "Bash(cmake -DSTATOR_BUILD_INTEGRATION=ON ..)",
-      "Bash(make integration_test)"
+      "Bash(make integration_test)",
+      "Bash(.venv/bin/python -m pytest tests/test_python_bindings.py -v)",
+      "Bash(./single_geometry_c --output /tmp/stator_ex_c)",
+      "Bash(.venv/bin/python examples/single_geometry.py --output /tmp/stator_ex_py --no-plot)"
     ]
   }
 }

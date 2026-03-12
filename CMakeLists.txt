@@ -41,6 +41,23 @@ if(STATOR_BUILD_TESTS)
     add_test(NAME StatorCPipelineTests COMMAND test_stator_c)
 endif()
 
+# ─── C Examples ───────────────────────────────────────────────────────────────
+option(STATOR_BUILD_EXAMPLES "Build C example executables" OFF)
+
+if(STATOR_BUILD_EXAMPLES)
+    # Helper macro: add an example executable linked to stator_c_core
+    macro(stator_example name src)
+        add_executable(${name} ${src})
+        target_link_libraries(${name} PRIVATE stator_c_core m pthread)
+        target_compile_options(${name} PRIVATE -Wall -Wextra)
+    endmacro()
+
+    stator_example(single_geometry_c  examples/single_geometry_c.c)
+    stator_example(batch_scheduler_c  examples/batch_scheduler_c.c)
+
+    message(STATUS "C examples enabled: single_geometry_c  batch_scheduler_c")
+endif()
+
 # ─── Integration test (requires GMSH) ─────────────────────────────────────────
 option(STATOR_BUILD_INTEGRATION "Build 3-D GMSH integration test" OFF)
 
