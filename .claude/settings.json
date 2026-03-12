@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./test_stator_c)",
+      "Read(//usr/include/**)",
+      "Bash(ls /usr/include/gmsh*)",
+      "Read(//usr/local/include/**)",
+      "Read(//usr/**)",
+      "Bash(cmake -DSTATOR_BUILD_INTEGRATION=ON ..)",
+      "Bash(make integration_test)"
+    ]
+  }
+}

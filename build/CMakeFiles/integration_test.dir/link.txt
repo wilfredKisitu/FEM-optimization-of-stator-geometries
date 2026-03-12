@@ -1,1 +1,1 @@
-/usr/bin/c++ CMakeFiles/integration_test.dir/tests/integration_test.cpp.o -o integration_test  -Wl,-rpath,/home/wilfred/analytica/FEM/build libstator_core.so /usr/lib/x86_64-linux-gnu/libgmsh.so 
+/usr/bin/cc CMakeFiles/integration_test.dir/tests/integration_test.c.o -o integration_test  /usr/lib/x86_64-linux-gnu/libgmsh.so -lm 
