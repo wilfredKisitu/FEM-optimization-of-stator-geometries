@@ -61,3 +61,43 @@ if(STATOR_BUILD_TESTS)
     enable_testing()
     add_test(NAME StatorPipelineTests COMMAND test_stator)
 endif()
+
+# ─── 3-D Integration Test (requires GMSH with FLTK GUI support) ───────────────
+# Build with:  cmake -DSTATOR_BUILD_INTEGRATION=ON ..
+#              make integration_test
+#              ./integration_test
+option(STATOR_BUILD_INTEGRATION "Build 3-D GMSH integration test with live visualisation" OFF)
+
+if(STATOR_BUILD_INTEGRATION)
+    find_path(GMSH_INCLUDE_DIR gmsh.h
+              PATHS /usr/include /usr/local/include
+              DOC "GMSH C++ API header directory")
+
+    find_library(GMSH_LIB gmsh
+                 PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+                 DOC "GMSH shared library")
+
+    if(NOT GMSH_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "GMSH header (gmsh.h) not found. Install libgmsh-dev:\n"
+            "  sudo apt install libgmsh-dev")
+    endif()
+    if(NOT GMSH_LIB)
+        message(FATAL_ERROR
+            "GMSH library (libgmsh.so) not found. Install libgmsh-dev:\n"
+            "  sudo apt install libgmsh-dev")
+    endif()
+
+    message(STATUS "Integration test: GMSH include=${GMSH_INCLUDE_DIR}")
+    message(STATUS "Integration test: GMSH library=${GMSH_LIB}")
+
+    add_executable(integration_test tests/integration_test.cpp)
+    target_include_directories(integration_test PRIVATE
+        ${GMSH_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/include)
+    # Link stator_core (params/validation) and gmsh (geometry + GUI)
+    target_link_libraries(integration_test PRIVATE stator_core ${GMSH_LIB})
+    target_compile_definitions(integration_test PRIVATE STATOR_WITH_GMSH)
+    target_compile_options(integration_test PRIVATE -Wall -Wextra)
+    target_compile_features(integration_test PRIVATE cxx_std_20)
+endif()

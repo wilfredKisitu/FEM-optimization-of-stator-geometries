@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: stator-pipeline
+Version: 1.0.0
+Summary: Stator mesh construction pipeline — Python interface
+Requires-Python: >=3.10
+Provides-Extra: vis
+Requires-Dist: matplotlib>=3.7; extra == "vis"
+Requires-Dist: numpy>=1.24; extra == "vis"
+Provides-Extra: vtk
+Requires-Dist: vtk>=9.2; extra == "vtk"
+Provides-Extra: pyvista
+Requires-Dist: pyvista>=0.42; extra == "pyvista"
+Provides-Extra: dev
+Requires-Dist: pytest>=7; extra == "dev"
+Dynamic: requires-python

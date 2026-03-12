@@ -1,5 +1,4 @@
 /home/wilfred/analytica/FEM/build/CMakeFiles/stator_core.dir
-/home/wilfred/analytica/FEM/build/CMakeFiles/test_stator.dir
-/home/wilfred/analytica/FEM/build/CMakeFiles/test.dir
+/home/wilfred/analytica/FEM/build/CMakeFiles/integration_test.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/edit_cache.dir
 /home/wilfred/analytica/FEM/build/CMakeFiles/rebuild_cache.dir

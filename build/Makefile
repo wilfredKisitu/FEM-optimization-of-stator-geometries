@@ -65,16 +65,6 @@ CMAKE_BINARY_DIR = /home/wilfred/analytica/FEM/build
 #=============================================================================
 # Targets provided globally by CMake.
 
-# Special rule for the target test
-test:
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running tests..."
-	/usr/bin/ctest --force-new-ctest-process $(ARGS)
-.PHONY : test
-
-# Special rule for the target test
-test/fast: test
-.PHONY : test/fast
-
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "No interactive CMake dialog available..."
@@ -140,17 +130,17 @@ stator_core/fast:
 .PHONY : stator_core/fast
 
 #=============================================================================
-# Target rules for targets named test_stator
+# Target rules for targets named integration_test
 
 # Build rule for target.
-test_stator: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_stator
-.PHONY : test_stator
+integration_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 integration_test
+.PHONY : integration_test
 
 # fast build rule for target.
-test_stator/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator.dir/build.make CMakeFiles/test_stator.dir/build
-.PHONY : test_stator/fast
+integration_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/build
+.PHONY : integration_test/fast
 
 src/batch_scheduler.o: src/batch_scheduler.cpp.o
 .PHONY : src/batch_scheduler.o
@@ -320,29 +310,29 @@ src/topology_registry.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/stator_core.dir/build.make CMakeFiles/stator_core.dir/src/topology_registry.cpp.s
 .PHONY : src/topology_registry.cpp.s
 
-tests/test_stator.o: tests/test_stator.cpp.o
-.PHONY : tests/test_stator.o
+tests/integration_test.o: tests/integration_test.cpp.o
+.PHONY : tests/integration_test.o
 
 # target to build an object file
-tests/test_stator.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator.dir/build.make CMakeFiles/test_stator.dir/tests/test_stator.cpp.o
-.PHONY : tests/test_stator.cpp.o
+tests/integration_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/tests/integration_test.cpp.o
+.PHONY : tests/integration_test.cpp.o
 
-tests/test_stator.i: tests/test_stator.cpp.i
-.PHONY : tests/test_stator.i
+tests/integration_test.i: tests/integration_test.cpp.i
+.PHONY : tests/integration_test.i
 
 # target to preprocess a source file
-tests/test_stator.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator.dir/build.make CMakeFiles/test_stator.dir/tests/test_stator.cpp.i
-.PHONY : tests/test_stator.cpp.i
+tests/integration_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/tests/integration_test.cpp.i
+.PHONY : tests/integration_test.cpp.i
 
-tests/test_stator.s: tests/test_stator.cpp.s
-.PHONY : tests/test_stator.s
+tests/integration_test.s: tests/integration_test.cpp.s
+.PHONY : tests/integration_test.s
 
 # target to generate assembly for a file
-tests/test_stator.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_stator.dir/build.make CMakeFiles/test_stator.dir/tests/test_stator.cpp.s
-.PHONY : tests/test_stator.cpp.s
+tests/integration_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/integration_test.dir/build.make CMakeFiles/integration_test.dir/tests/integration_test.cpp.s
+.PHONY : tests/integration_test.cpp.s
 
 # Help Target
 help:
@@ -352,9 +342,8 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... test"
+	@echo "... integration_test"
 	@echo "... stator_core"
-	@echo "... test_stator"
 	@echo "... src/batch_scheduler.o"
 	@echo "... src/batch_scheduler.i"
 	@echo "... src/batch_scheduler.s"
@@ -376,9 +365,9 @@ help:
 	@echo "... src/topology_registry.o"
 	@echo "... src/topology_registry.i"
 	@echo "... src/topology_registry.s"
-	@echo "... tests/test_stator.o"
-	@echo "... tests/test_stator.i"
-	@echo "... tests/test_stator.s"
+	@echo "... tests/integration_test.o"
+	@echo "... tests/integration_test.i"
+	@echo "... tests/integration_test.s"
 .PHONY : help
 
 

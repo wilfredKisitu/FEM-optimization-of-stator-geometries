@@ -204,8 +204,17 @@ CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
+//GMSH C++ API header directory
+GMSH_INCLUDE_DIR:PATH=/usr/include
+
+//GMSH shared library
+GMSH_LIB:FILEPATH=/usr/lib/x86_64-linux-gnu/libgmsh.so
+
+//Build 3-D GMSH integration test with live visualisation
+STATOR_BUILD_INTEGRATION:BOOL=ON
+
 //Build test executable
-STATOR_BUILD_TESTS:BOOL=ON
+STATOR_BUILD_TESTS:BOOL=OFF
 
 //Build with real GMSH backend
 STATOR_WITH_GMSH:BOOL=OFF
