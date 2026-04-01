@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stator-pipeline"
+version = "2.0.0"
+description = "FEM stator mesh generation pipeline — pure Python"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+vis = ["matplotlib>=3.7", "numpy>=1.24"]
+vtk = ["vtk>=9.2"]
+pyvista = ["pyvista>=0.42"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stator_pipeline*"]

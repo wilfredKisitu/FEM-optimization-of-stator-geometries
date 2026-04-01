@@ -1,1560 +1,1476 @@
-# Stator Mesh Construction Pipeline
+# FEM Optimization of Stator Geometries
 
-A high-performance C++20 library for parametric finite-element mesh generation of electric motor stator geometries. The pipeline covers the full chain from dimensioned parameters through geometry construction, physical-group assignment, mesh sizing, and multi-format file export. A pybind11 Python layer exposes the complete API for integration with optimisation loops (genetic algorithms, Bayesian optimisation, etc.).
+A pure-Python pipeline for parametric finite-element mesh generation of electric
+motor and generator stator geometries.  The full chain — dimensioned parameters,
+geometry construction, physical-group assignment, adaptive mesh sizing, and
+multi-format export — is exposed through a single importable package with zero
+runtime dependencies.
 
 ---
 
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
+1. [Architecture](#architecture)
 2. [Repository Layout](#repository-layout)
-3. [Build Instructions](#build-instructions)
-4. [C++ Components](#c-components)
-   - [StatorParams](#statorparams)
-   - [IGmshBackend / StubGmshBackend](#igmshbackend--stubgmshbackend)
-   - [GeometryBuilder](#geometrybuilder)
-   - [TopologyRegistry](#topologyregistry)
-   - [MeshGenerator](#meshgenerator)
-   - [ExportEngine](#exportengine)
-   - [BatchScheduler](#batchscheduler)
-5. [Python API](#python-api)
-   - [StatorConfig](#statorconfig)
-   - [generate_single](#generate_single)
-   - [generate_batch](#generate_batch)
-   - [StatorVisualiser](#statorvisualiser)
-   - [Low-level _stator_core bindings](#low-level-_stator_core-bindings)
-6. [Enumerations Reference](#enumerations-reference)
-7. [Output File Formats](#output-file-formats)
-8. [Testing](#testing)
-9. [Examples](#examples)
-   - [Single geometry (Python)](#single-geometry-python)
-   - [Batch sweep for a genetic algorithm](#batch-sweep-for-a-genetic-algorithm)
-   - [Direct C++ usage](#direct-c-usage)
-   - [3-D lamination stack extrusion](#3-d-lamination-stack-extrusion)
+3. [Installation](#installation)
+4. [Package Reference](#package-reference)
+   - [Enumerations](#enumerations)
+   - [StatorParams / StatorConfig](#statorparams--statorconfig)
+   - [params — validation and factories](#params--validation-and-factories)
+   - [geometry_builder](#geometry_builder)
+   - [topology_registry](#topology_registry)
+   - [gmsh_backend](#gmsh_backend)
+   - [mesh_generator](#mesh_generator)
+   - [export_engine](#export_engine)
+   - [pipeline — high-level API](#pipeline--high-level-api)
+   - [batch_scheduler](#batch_scheduler)
+   - [visualiser](#visualiser)
+5. [Examples](#examples)
+   - [single_geometry.py](#single_geometrypy)
+   - [batch_scheduler.py](#batch_schedulerpy)
+6. [Tests](#tests)
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-Python caller (optimiser / script)
-        │
-        │  pybind11 (GIL released during C++ execution)
-        ▼
-BatchScheduler  ──fork()──►  worker process 1
-                ──fork()──►  worker process 2  ...
-                             │
-                             ▼
-                   [validate params]
-                         │
-                         ▼
-                   GeometryBuilder   (GMSH OCC kernel)
-                         │
-                         ▼
-                   TopologyRegistry  (thread-safe, shared_mutex)
-                         │
-                         ▼
-                   MeshGenerator     (3-layer size-field strategy)
-                         │
-                         ▼
-                   ExportEngine      (async: .msh / .vtk / .h5 / .json)
+Python caller
+     │
+     ▼
+ pipeline.py          ← validate_config / generate_single / generate_batch
+     │
+     ├─ params.py             validate_and_derive (15 constraint rules)
+     ├─ geometry_builder.py   GeometryBuilder.build()
+     ├─ topology_registry.py  TopologyRegistry
+     ├─ mesh_generator.py     MeshGenerator.generate()
+     └─ export_engine.py      ExportEngine.write_all()
+                                    │
+               ┌────────────────────┼────────────────────┐
+               ▼                    ▼                     ▼
+            .msh               _meta.json              .vtk / .h5
 ```
 
-The core library always compiles. When `STATOR_WITH_GMSH=OFF` (the default for CI/tests) it substitutes `StubGmshBackend`, which records all API calls and allows the full pipeline to be unit-tested without a GMSH installation.
+`batch_scheduler.py` wraps the pipeline in a `ProcessPoolExecutor` for
+parameter-sweep workloads.
 
 ---
 
 ## Repository Layout
 
 ```
-FEM/
-├── CMakeLists.txt
-├── include/
-│   └── stator/
-│       ├── params.hpp            # StatorParams struct + enums
-│       ├── gmsh_backend.hpp      # IGmshBackend interface + StubGmshBackend
-│       ├── geometry_builder.hpp  # GeometryBuilder + SlotProfile
-│       ├── topology_registry.hpp # TopologyRegistry + RegionType
-│       ├── mesh_generator.hpp    # MeshGenerator + MeshConfig + MeshResult
-│       ├── export_engine.hpp     # ExportEngine + ExportFormat + sha256
-│       └── batch_scheduler.hpp   # BatchScheduler + BatchJob + BatchResult
-├── src/
-│   ├── params.cpp
-│   ├── gmsh_backend.cpp
-│   ├── geometry_builder.cpp
-│   ├── topology_registry.cpp
-│   ├── mesh_generator.cpp
-│   ├── export_engine.cpp
-│   └── batch_scheduler.cpp
-├── bindings/
-│   └── python_bindings.cpp       # pybind11 module _stator_core
-├── python/
-│   └── stator_pipeline/
-│       ├── __init__.py
-│       ├── pipeline.py           # generate_single, generate_batch, StatorConfig
-│       ├── params.py             # (reserved)
-│       └── visualiser.py         # StatorVisualiser
+FEM-optimization-of-stator-geometries/
+├── stator_pipeline/
+│   ├── __init__.py            Public API exports
+│   ├── params.py              StatorParams dataclass + validation
+│   ├── geometry_builder.py    2-D geometry construction (GMSH OCC)
+│   ├── topology_registry.py   Thread-safe tag → region mapping
+│   ├── gmsh_backend.py        Abstract backend + in-memory stub
+│   ├── mesh_generator.py      Physical groups + mesh sizing + generation
+│   ├── export_engine.py       MSH / VTK / HDF5 / JSON writers
+│   ├── pipeline.py            High-level generate_single / generate_batch
+│   ├── batch_scheduler.py     Parallel batch execution
+│   └── visualiser.py          Cross-section and mesh plotting
+├── examples/
+│   ├── single_geometry.py     Single stator — HV generator example
+│   ├── single_geometry.md     Design notes for the example above
+│   └── batch_scheduler.py     15-job parameter sweep
 ├── tests/
-│   └── test_stator.cpp           # 143 hand-rolled unit/integration tests
-└── examples/
-    ├── single_geometry.py
-    └── batch_ga_integration.py
+│   └── test_stator.py         ~140 pytest test cases
+└── pyproject.toml
 ```
 
 ---
 
-## Build Instructions
-
-### Prerequisites
-
-| Tool | Minimum version |
-|------|----------------|
-| CMake | 3.22 |
-| GCC or Clang | GCC 13 / Clang 16 (`-std=c++20`) |
-| GMSH *(optional)* | 4.11 |
-| Intel TBB *(optional)* | 2021 |
-| HDF5 + HighFive *(optional)* | HDF5 1.12 |
-| pybind11 *(optional)* | 2.11 |
-
-### Stub build (no GMSH required — default)
+## Installation
 
 ```bash
-cmake -B build
-cmake --build build --parallel
+# Editable install (zero runtime dependencies)
+pip install -e .
+
+# With visualization support
+pip install -e ".[vis]"          # matplotlib + numpy
+pip install -e ".[vis,vtk]"      # + VTK library for mesh loading
+pip install -e ".[vis,pyvista]"  # + PyVista for 3-D rendering
+
+# Development (adds pytest)
+pip install -e ".[dev]"
 ```
 
-This produces `build/libstator_core.so` and (if `STATOR_BUILD_TESTS=ON`) `build/test_stator`.
+Requires Python ≥ 3.10.
 
-### Full build with all optional components
+---
 
-```bash
-cmake -B build \
-  -DSTATOR_WITH_GMSH=ON \
-  -DSTATOR_WITH_TBB=ON \
-  -DSTATOR_WITH_HDF5=ON \
-  -DSTATOR_WITH_PYTHON=ON
-cmake --build build --parallel
-```
+## Package Reference
 
-### CMake options
+All public symbols are importable directly from `stator_pipeline`:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `STATOR_WITH_GMSH` | `OFF` | Link against the real GMSH C++ API |
-| `STATOR_WITH_TBB` | `OFF` | Enable Intel TBB for parallel topology work |
-| `STATOR_WITH_HDF5` | `OFF` | Enable HDF5 mesh export via HighFive |
-| `STATOR_WITH_PYTHON` | `OFF` | Build the `_stator_core` pybind11 module |
-| `STATOR_BUILD_TESTS` | `ON` | Build `test_stator` executable |
-
-### Installing the Python package
-
-```bash
-# After building with -DSTATOR_WITH_PYTHON=ON:
-pip install -e python/
-# or
-python python/setup.py install
+```python
+import stator_pipeline as sp
 ```
 
 ---
 
-## C++ Components
+### Enumerations
 
-All symbols live in the `stator` namespace. All units are SI (metres, radians) unless noted.
+#### `SlotShape`
+
+```
+class SlotShape(IntEnum)
+```
+
+Slot cross-section profile.
+
+| Member | Value | Description |
+|---|---|---|
+| `RECTANGULAR` | 0 | Uniform width from bore to yoke |
+| `TRAPEZOIDAL` | 1 | Linearly tapered — inner narrower than outer |
+| `ROUND_BOTTOM` | 2 | Straight sides, circular arc at bottom |
+| `SEMI_CLOSED` | 3 | Narrow mouth opening + full-width body |
 
 ---
 
-### StatorParams
+#### `WindingType`
 
-**Header:** `include/stator/params.hpp`
+```
+class WindingType(IntEnum)
+```
 
-Plain-old-data struct representing the complete parametric description of a stator cross-section. Set fields then call `validate_and_derive()` before passing the struct to any other component.
+Coil layout strategy.
 
-#### Fields
+| Member | Value | Description |
+|---|---|---|
+| `SINGLE_LAYER` | 0 | One coil group per slot |
+| `DOUBLE_LAYER` | 1 | Upper and lower coil groups per slot |
+| `CONCENTRATED` | 2 | Coils concentrated in adjacent slot pairs |
+| `DISTRIBUTED` | 3 | Coils spread uniformly around stator |
 
-**Section 1 — Core radii & air gap**
+---
+
+#### `LaminationMaterial`
+
+```
+class LaminationMaterial(IntEnum)
+```
+
+Silicon-steel grade.
+
+| Member | Value | Grade | Typical use |
+|---|---|---|---|
+| `M270_35A` | 0 | 0.35 mm, low loss | Small/medium motors |
+| `M330_50A` | 1 | 0.50 mm, general | Large industrial machines |
+| `M400_50A` | 2 | 0.50 mm, higher flux | Cost-sensitive large frames |
+| `NO20` | 3 | Specialty amorphous | High-efficiency applications |
+| `CUSTOM` | 4 | User-defined B-H curve | Research / non-standard |
+
+---
+
+#### `ExportFormat`
+
+```
+class ExportFormat(IntFlag)
+```
+
+Bitmask controlling which output files are written.  Combine with `|`.
+
+| Member | Bit | Extension | Content |
+|---|---|---|---|
+| `NONE` | 0 | — | No files |
+| `MSH` | 1 | `.msh` | GMSH native mesh |
+| `VTK` | 2 | `.vtk` | VTK legacy ASCII |
+| `HDF5` | 4 | `.h5` | HDF5 mesh + scalars |
+| `JSON` | 8 | `_meta.json` | Parameter + mesh metadata |
+| `ALL` | 15 | all above | All four formats |
+
+```python
+# Examples
+sp.ExportFormat.JSON
+sp.ExportFormat.MSH | sp.ExportFormat.JSON
+sp.ExportFormat.ALL
+```
+
+---
+
+#### `RegionType`
+
+```
+class RegionType(IntEnum)
+```
+
+Physical region identifiers stored in the topology registry.
+
+| Member | Value | Description |
+|---|---|---|
+| `UNKNOWN` | 0 | Unassigned |
+| `YOKE` | 1 | Back-iron annulus |
+| `TOOTH` | 2 | Tooth body |
+| `SLOT_AIR` | 3 | Slot air cavity |
+| `SLOT_INS` | 4 | Slot insulation layer |
+| `COIL_A_POS` | 5 | Phase A, current into page |
+| `COIL_A_NEG` | 6 | Phase A, current out of page |
+| `COIL_B_POS` | 7 | Phase B, positive |
+| `COIL_B_NEG` | 8 | Phase B, negative |
+| `COIL_C_POS` | 9 | Phase C, positive |
+| `COIL_C_NEG` | 10 | Phase C, negative |
+| `BORE_AIR` | 11 | Air in bore |
+| `BOUNDARY_BORE` | 12 | Bore circle boundary curve |
+| `BOUNDARY_OUTER` | 13 | Outer circle boundary curve |
+
+---
+
+### StatorParams / StatorConfig
+
+```
+class StatorParams
+```
+
+Central parameter dataclass.  `StatorConfig` is an alias for `StatorParams`.
+
+All dimensional fields are in **SI units (metres)** unless noted otherwise.
+
+#### Radial geometry
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `R_outer` | `double` | `0.25` | Outer radius of the stator lamination (m) |
-| `R_inner` | `double` | `0.15` | Inner (bore-facing) radius (m) |
-| `airgap_length` | `double` | `0.001` | Radial air-gap between rotor and stator bore (m) |
+|---|---|---|---|
+| `R_outer` | `float` | `0.25` | Outer stator radius (m) |
+| `R_inner` | `float` | `0.15` | Inner bore radius (m) |
+| `airgap_length` | `float` | `0.001` | Radial air-gap (m) |
 
-**Section 2 — Slot geometry**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `n_slots` | `int` | `36` | Number of stator slots |
-| `slot_depth` | `double` | `0.06` | Radial depth of each slot (m) |
-| `slot_width_outer` | `double` | `0.012` | Slot width at the outer (yoke) edge (m) |
-| `slot_width_inner` | `double` | `0.010` | Slot width at the bore edge (m) |
-| `slot_opening` | `double` | `0.004` | Mouth opening width (SEMI_CLOSED only) (m) |
-| `slot_opening_depth` | `double` | `0.003` | Depth of the slot mouth region (m) |
-| `tooth_tip_angle` | `double` | `0.1` | Tooth-tip chamfer angle (radians) |
-| `slot_shape` | `SlotShape` | `SEMI_CLOSED` | Cross-sectional slot profile |
-
-**Section 3 — Coil / winding**
+#### Slot geometry
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `coil_depth` | `double` | `0.05` | Radial depth of the coil conductor region (m) |
-| `coil_width_outer` | `double` | `0.008` | Coil width at outer edge (m) |
-| `coil_width_inner` | `double` | `0.007` | Coil width at inner edge (m) |
-| `insulation_thickness` | `double` | `0.001` | Thickness of slot insulation wrap (m) |
+|---|---|---|---|
+| `n_slots` | `int` | `36` | Number of stator slots; must be even and ≥ 6 |
+| `slot_depth` | `float` | `0.06` | Radial depth of slot (m) |
+| `slot_width_outer` | `float` | `0.012` | Slot width at yoke edge (m) |
+| `slot_width_inner` | `float` | `0.010` | Slot width at bore edge (m) |
+| `slot_opening` | `float` | `0.004` | Mouth opening width — `SEMI_CLOSED` only (m) |
+| `slot_opening_depth` | `float` | `0.003` | Depth of mouth region — `SEMI_CLOSED` only (m) |
+| `tooth_tip_angle` | `float` | `0.1` | Chamfer angle of tooth tips (radians); must be in `[0, π/4)` |
+| `slot_shape` | `SlotShape` | `SEMI_CLOSED` | Cross-section profile |
+
+#### Coil and winding
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `coil_depth` | `float` | `0.05` | Radial coil depth (m); must satisfy constraint below |
+| `coil_width_outer` | `float` | `0.008` | Coil width at outer edge (m) |
+| `coil_width_inner` | `float` | `0.007` | Coil width at inner edge (m) |
+| `insulation_thickness` | `float` | `0.001` | Groundwall insulation thickness (m) |
 | `turns_per_coil` | `int` | `10` | Number of conductor turns per coil |
 | `coil_pitch` | `int` | `5` | Coil pitch in slot numbers |
-| `wire_diameter` | `double` | `0.001` | Individual wire diameter (m) |
-| `slot_fill_factor` | `double` | `0.45` | Target copper fill ratio (0–1); used for validation cross-check |
-| `winding_type` | `WindingType` | `DOUBLE_LAYER` | Winding arrangement |
+| `wire_diameter` | `float` | `0.001` | Round conductor diameter (m) |
+| `slot_fill_factor` | `float` | `0.45` | Target copper fill fraction `(0, 1)` |
+| `winding_type` | `WindingType` | `DOUBLE_LAYER` | Coil layout |
 
-**Section 4 — Lamination stack**
+**Coil depth constraint:**
+
+```
+coil_depth ≤ slot_depth − slot_opening_depth − 2 × insulation_thickness
+```
+
+#### Lamination stack
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `t_lam` | `double` | `0.00035` | Single lamination sheet thickness (m) |
-| `n_lam` | `int` | `200` | Number of lamination sheets |
-| `z_spacing` | `double` | `0.0` | Axial gap between sheets (m) |
-| `insulation_coating_thickness` | `double` | `0.00005` | Inter-lamination coating thickness (m) |
+|---|---|---|---|
+| `t_lam` | `float` | `0.00035` | Individual lamination thickness (m) |
+| `n_lam` | `int` | `200` | Number of laminations; must be > 0 |
+| `z_spacing` | `float` | `0.0` | Inter-lamination gap (m); must be ≥ 0 |
+| `insulation_coating_thickness` | `float` | `0.00005` | Conductor coating thickness (m) |
 | `material` | `LaminationMaterial` | `M270_35A` | Electrical steel grade |
-| `material_file` | `std::string` | `""` | Path to custom B-H curve file (used when `material=CUSTOM`) |
+| `material_file` | `str` | `""` | Path to B-H curve file; required when `material=CUSTOM` |
 
-**Section 5 — Mesh sizing**
+#### Mesh sizing
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `mesh_yoke` | `double` | `0.006` | Target element size in the yoke region (m) |
-| `mesh_slot` | `double` | `0.003` | Target element size in slot air regions (m) |
-| `mesh_coil` | `double` | `0.0015` | Target element size in coil conductor regions (m) |
-| `mesh_ins` | `double` | `0.0007` | Target element size in insulation regions (m) |
-| `mesh_boundary_layers` | `int` | `3` | Number of boundary-layer inflation rows at the bore |
-| `mesh_curvature` | `double` | `0.3` | Curvature-based refinement factor (0–1) |
-| `mesh_transition_layers` | `int` | `2` | Number of transition element layers between regions |
+|---|---|---|---|
+| `mesh_yoke` | `float` | `0.006` | Target element size in yoke (m) |
+| `mesh_slot` | `float` | `0.003` | Target element size in slot (m) |
+| `mesh_coil` | `float` | `0.0015` | Target element size in coil (m) |
+| `mesh_ins` | `float` | `0.0007` | Target element size in insulation (m) |
+| `mesh_boundary_layers` | `int` | `3` | Number of boundary layers at bore |
+| `mesh_curvature` | `float` | `0.3` | Curvature-based refinement factor `(0, 1)` |
+| `mesh_transition_layers` | `int` | `2` | Transition layer count between regions |
 
-**Section 6 — Derived fields (read-only after `validate_and_derive()`)**
+Mesh sizes must satisfy: `mesh_ins ≤ mesh_coil ≤ mesh_slot ≤ mesh_yoke`.
+
+#### Derived fields (read-only after validation)
 
 | Field | Formula | Description |
-|-------|---------|-------------|
-| `yoke_height` | `R_outer - R_inner - slot_depth` | Radial height of the back-iron yoke (m) |
-| `tooth_width` | `R_inner * slot_pitch - slot_width_inner` | Tooth width at the bore (m) |
-| `slot_pitch` | `2π / n_slots` | Angular pitch between slot centres (radians) |
-| `stack_length` | `n_lam * t_lam + (n_lam-1) * z_spacing` | Total axial stack length (m) |
-| `fill_factor` | `coil_area / slot_area` | Computed copper fill fraction |
-
-#### Methods
-
-```cpp
-void validate_and_derive();
-```
-Validates all 16 geometric constraint rules and computes the 5 derived fields. Throws `std::invalid_argument` or `std::logic_error` with a descriptive message on failure. Must be called before passing a `StatorParams` to any other component.
-
-**Validation rules enforced:**
-- `R_outer > R_inner > 0`
-- `airgap_length > 0` and `airgap_length < R_inner`
-- `n_slots >= 3`
-- `slot_depth > 0` and `slot_depth < (R_outer - R_inner)`
-- `slot_width_inner > 0`, `slot_width_outer > 0`
-- `slot_opening > 0` and `slot_opening < slot_width_inner`
-- `coil_depth > 0` and `coil_depth < slot_depth`
-- `insulation_thickness > 0`
-- `turns_per_coil >= 1`
-- `wire_diameter > 0`
-- `slot_fill_factor` in `(0, 1)`
-- `t_lam > 0`, `n_lam >= 1`
-- `yoke_height > 0` (derived check)
-- `tooth_width > 0` (derived check)
-- `fill_factor` in `(0, 1)` (derived check)
-
-```cpp
-std::string to_json() const;
-```
-Returns a single-line JSON string with all user-settable fields plus a `"_derived"` sub-object. Used as input to SHA-256 for deterministic output file naming.
-
-#### Factory functions
-
-```cpp
-StatorParams make_reference_params();
-```
-Returns a validated 36-slot SEMI_CLOSED DOUBLE_LAYER reference design (the default field values). Used as a test baseline.
-
-```cpp
-StatorParams make_minimal_params();
-```
-Returns a validated 12-slot RECTANGULAR SINGLE_LAYER minimal design suitable for quick integration tests.
+|---|---|---|
+| `yoke_height` | `R_outer − R_inner − slot_depth` | Radial back-iron height (m) |
+| `tooth_width` | `R_inner × (2π/n_slots) − slot_width_inner` | Tooth body width (m) |
+| `slot_pitch` | `2π / n_slots` | Angular slot pitch (radians) |
+| `stack_length` | `n_lam × t_lam + (n_lam−1) × z_spacing` | Total axial stack (m) |
+| `fill_factor` | `coil_area / slot_area` | Actual copper fill fraction |
 
 ---
 
-### IGmshBackend / StubGmshBackend
+### params — validation and factories
 
-**Header:** `include/stator/gmsh_backend.hpp`
+#### `validate_and_derive`
 
-Abstract interface decoupling all geometry code from the GMSH C++ library. The same `GeometryBuilder` / `MeshGenerator` code operates against either backend.
-
-#### IGmshBackend — pure virtual interface
-
-```cpp
-// Session lifecycle
-void initialize(const std::string& model_name);
-void synchronize();
-void finalize();
-void set_option(const std::string& name, double value);
-
-// OCC geometry primitives — return new entity tag
-int add_point(double x, double y, double z, double mesh_size = 0.0);
-int add_line(int start, int end);
-int add_circle(double cx, double cy, double cz, double radius);
-int add_arc(int start, int centre, int end);
-int add_curve_loop(const std::vector<int>& tags);
-int add_plane_surface(const std::vector<int>& loop_tags);
-
-// Boolean operations — return surviving (dim, tag) pairs
-std::vector<std::pair<int,int>> boolean_cut(objects, tools, remove_tool=true);
-std::vector<std::pair<int,int>> boolean_fragment(objects, tools);
-
-// Physical groups
-int add_physical_group(int dim, const std::vector<int>& tags,
-                        const std::string& name, int tag = -1);
-
-// Mesh size fields — return new field tag
-int  add_math_eval_field(const std::string& expr);
-int  add_constant_field(double value, const std::vector<int>& surfaces);
-void set_background_field(int field_tag);
-
-// Mesh generation
-void generate_mesh(int dim);
-void write_mesh(const std::string& filename);
-std::vector<std::pair<int,int>> get_entities_2d();
+```python
+stator_pipeline.validate_and_derive(p: StatorParams) -> StatorParams
 ```
 
-#### StubGmshBackend
+Validates all geometric constraints and computes derived fields.
 
-Fully functional in-process stub. All primitive calls auto-increment counters and return monotonically increasing tags. `boolean_cut` returns objects unchanged; `boolean_fragment` returns the union. No files are written by `write_mesh`.
+**Parameters**
 
-**Inspection methods (available in tests):**
+| Name | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Parameter set to validate |
 
-```cpp
-int  point_count()          const;  // total add_point calls
-int  line_count()           const;  // total add_line + add_arc calls
-int  surface_count()        const;  // total add_plane_surface calls
-int  field_count()          const;  // total add_*_field calls
-int  physical_group_count() const;
-bool was_initialized()      const;
-bool was_synchronized()     const;
-bool was_finalized()        const;
-int  sync_count()           const;
-bool mesh_generated()       const;
-int  background_field()     const;
-const std::string& last_write_path() const;
-const std::vector<PhysGroupRecord>& physical_groups() const;
+**Returns** `StatorParams` — new instance with all five derived fields populated.
 
-void reset();  // clear all state; reuse between test cases
-```
+**Raises** `ValueError` with a descriptive message if any of the 15 constraint
+rules is violated.
 
-#### Factory
+**Validation rules**
 
-```cpp
-std::unique_ptr<IGmshBackend> make_default_backend();
-```
-Returns `RealGmshBackend` when compiled with `-DSTATOR_WITH_GMSH=ON`, otherwise returns `StubGmshBackend` (with a stderr warning).
+| # | Rule |
+|---|---|
+| 1 | All dimensional fields > 0 |
+| 2 | `R_inner < R_outer` |
+| 3 | `slot_depth < (R_outer − R_inner)` |
+| 4 | `n_slots ≥ 6` and even |
+| 5 | `slot_width_inner < R_inner × 2π/n_slots` |
+| 6 | `SEMI_CLOSED`: `slot_opening < slot_width_inner` and `slot_opening_depth < slot_depth` |
+| 7 | `coil_depth ≤ slot_depth − slot_opening_depth − 2×insulation_thickness` |
+| 8 | `coil_width_inner ≤ slot_width_inner − 2×insulation_thickness` |
+| 9 | `n_lam > 0` |
+| 10 | `z_spacing ≥ 0` |
+| 11 | `insulation_coating_thickness ≥ 0` |
+| 12 | `material == CUSTOM` requires non-empty `material_file` |
+| 13 | `mesh_ins ≤ mesh_coil ≤ mesh_slot ≤ mesh_yoke` |
+| 14 | `tooth_tip_angle ∈ [0, π/4)` |
+| 15 | Computed `fill_factor ∈ (0, 1)` |
 
 ---
 
-### GeometryBuilder
+#### `make_reference_params`
 
-**Header:** `include/stator/geometry_builder.hpp`
-
-Constructs the complete 2-D stator cross-section in the GMSH OCC kernel.
-
-#### Construction
-
-```cpp
-explicit GeometryBuilder(IGmshBackend* backend);
-```
-Throws `std::invalid_argument` if `backend` is null.
-
-#### Primary method
-
-```cpp
-GeometryBuildResult build(const StatorParams& p);
+```python
+stator_pipeline.make_reference_params() -> StatorParams
 ```
 
-Executes the full geometry build sequence:
+Factory returning a validated 36-slot reference configuration (SEMI_CLOSED,
+DOUBLE_LAYER, M270_35A, 200 laminations × 0.35 mm).
 
-1. Add outer circle (`R_outer`) and inner (bore) circle (`R_inner`)
-2. Create the annular yoke surface via `add_plane_surface` with both curve loops
-3. For each of the `n_slots` slots, call the shape-specific builder (see below) to produce a `SlotProfile`
-4. Boolean-cut all slot cavities out of the yoke surface
-5. Call `build_coil_inside_slot()` and `build_insulation()` for each slot
-6. `synchronize()` the backend
-
-Returns a `GeometryBuildResult`. On failure, `result.success == false` and `result.error_message` describes the problem.
-
-**GeometryBuildResult fields:**
-
-| Field | Description |
-|-------|-------------|
-| `success` | `true` if geometry was built without errors |
-| `error_message` | Non-empty string on failure |
-| `yoke_surface` | GMSH surface tag of the trimmed back-iron yoke |
-| `bore_curve` | GMSH tag of the inner bore circle |
-| `outer_curve` | GMSH tag of the outer circle |
-| `slots` | `std::vector<SlotProfile>` — one entry per slot |
-
-**SlotProfile fields:**
-
-| Field | Description |
-|-------|-------------|
-| `slot_idx` | Zero-based slot index |
-| `slot_surface` | GMSH tag of the main slot air-cavity surface |
-| `coil_upper_sf` | GMSH tag of the upper (or only) coil conductor surface |
-| `coil_lower_sf` | GMSH tag of the lower coil surface; `-1` for SINGLE_LAYER |
-| `ins_upper_sf` | GMSH tag of the insulation surface around the upper coil |
-| `ins_lower_sf` | GMSH tag of the insulation surface around the lower coil |
-| `mouth_curve_bot` | GMSH tag of the bore-facing slot-mouth edge (boundary-layer seed) |
-| `mouth_curve_top` | GMSH tag of the inner edge of the slot body (SEMI_CLOSED only) |
-| `angle` | Rotation angle of this slot's centre (radians) |
-
-#### Slot shape builders
-
-All slot builders operate in a local frame (slot axis on +x) then rotate by `slot_angle(k, n_slots) = 2π*k/n_slots` before adding to GMSH.
-
-| Shape | Points | Notes |
-|-------|--------|-------|
-| `RECTANGULAR` | 4 corners | Uniform width = `slot_width_outer` |
-| `TRAPEZOIDAL` | 4 corners | Inner width `slot_width_inner`, outer `slot_width_outer` |
-| `ROUND_BOTTOM` | 4 points + 2 arc centres | Bottom edge replaced by circular arc |
-| `SEMI_CLOSED` | 6 points | Adds a narrow mouth region of width `slot_opening` and depth `slot_opening_depth` |
-
-#### Static helpers
-
-```cpp
-static std::pair<double,double> rotate(double x, double y, double theta) noexcept;
-```
-Rotates a 2-D point by `theta` radians. Returns `(x cos θ − y sin θ, x sin θ + y cos θ)`.
+**Returns** `StatorParams` — validated, derived fields populated.
 
 ---
 
-### TopologyRegistry
+#### `make_minimal_params`
 
-**Header:** `include/stator/topology_registry.hpp`
-
-Thread-safe registry that maps GMSH entity tags to named physical regions. Uses `std::shared_mutex` — multiple concurrent readers, exclusive writers.
-
-#### Construction
-
-```cpp
-explicit TopologyRegistry(int n_slots);
+```python
+stator_pipeline.make_minimal_params() -> StatorParams
 ```
 
-#### Registration (write-locked)
+Factory returning a validated 12-slot minimal configuration (RECTANGULAR,
+SINGLE_LAYER, smaller radii) suitable for unit-test workloads.
 
-```cpp
-void register_surface(RegionType type, int gmsh_tag, int slot_idx = -1);
-```
-Associates a GMSH surface tag with a `RegionType`. `slot_idx = -1` for non-slot regions (e.g. `YOKE`).
-
-```cpp
-void register_slot_coil(int slot_idx, int upper_tag, int lower_tag = -1);
-```
-Records coil surface tags for a slot. `lower_tag = -1` for SINGLE_LAYER.
-
-```cpp
-void register_boundary_curve(RegionType type, int gmsh_curve);
-```
-Records a 1-D boundary curve (e.g. `BOUNDARY_BORE`, `BOUNDARY_OUTER`).
-
-#### Winding assignment
-
-```cpp
-void assign_winding_layout(WindingType wt);
-```
-Computes the 3-phase winding assignment for all registered slots and stores one `SlotWindingAssignment` per slot. Throws `std::logic_error` if coils have not been registered first.
-
-**Phase sequences:**
-
-| WindingType | Slot % 6 pattern (upper phase) |
-|-------------|-------------------------------|
-| `DISTRIBUTED` | A+, B−, C+, A−, B+, C− |
-| `CONCENTRATED` | A+, A−, B+, B−, C+, C− |
-| `SINGLE_LAYER` | A+, B+, C+, A+, B+, C+ (repeating, lower = UNKNOWN) |
-| `DOUBLE_LAYER` | Same as DISTRIBUTED with both upper and lower assigned |
-
-#### Queries (read-locked)
-
-```cpp
-std::vector<int> get_surfaces(RegionType type) const;
-```
-Returns all GMSH surface tags registered under `type`.
-
-```cpp
-std::vector<int> get_boundary_curves(RegionType type) const;
-```
-Returns boundary curve tags for the given region type.
-
-```cpp
-const SlotWindingAssignment& get_slot_assignment(int slot_idx) const;
-const std::vector<SlotWindingAssignment>& get_winding_assignments() const;
-```
-Access the computed winding assignments (available after `assign_winding_layout()`).
-
-```cpp
-int  total_registered_surfaces() const;
-bool winding_assigned() const noexcept;
-void dump(std::ostream& os) const;  // diagnostic print
-```
-
-#### SlotWindingAssignment fields
-
-| Field | Description |
-|-------|-------------|
-| `slot_idx` | Zero-based slot index |
-| `upper_phase` | `RegionType` for the upper coil conductor |
-| `lower_phase` | `RegionType` for the lower coil; `UNKNOWN` for SINGLE_LAYER |
-| `upper_tag` | GMSH surface tag of the upper coil |
-| `lower_tag` | GMSH surface tag of the lower coil; `-1` for SINGLE_LAYER |
+**Returns** `StatorParams` — validated, derived fields populated.
 
 ---
 
-### MeshGenerator
+### geometry_builder
 
-**Header:** `include/stator/mesh_generator.hpp`
+#### `SlotProfile`
 
-Assigns GMSH physical groups and generates the 2-D (and optionally 3-D extruded) mesh using a three-layer size-field strategy.
-
-#### MeshConfig fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `algorithm_2d` | `int` | `5` | GMSH 2-D algorithm (5=Delaunay, 6=Frontal-Delaunay, 8=Delaunay-quads) |
-| `algorithm_3d` | `int` | `10` | GMSH 3-D algorithm (10=HXT, 1=Delaunay, 4=Frontal) |
-| `smoothing_passes` | `int` | `3` | Laplacian smoothing iterations after meshing |
-| `optimiser` | `std::string` | `"Netgen"` | Post-meshing optimiser name |
-| `min_quality_threshold` | `double` | `0.3` | Minimum acceptable element quality (0–1); elements below this trigger warnings |
-| `periodic` | `bool` | `false` | Enable periodic meshing (sector periodicity) |
-| `layers_per_lam` | `int` | `2` | Number of element layers per lamination in 3-D extrusion |
-
-#### Construction
-
-```cpp
-MeshGenerator(IGmshBackend* backend, const MeshConfig& config = {});
+```
+class SlotProfile(dataclass)
 ```
 
-#### Primary method
-
-```cpp
-MeshResult generate(const StatorParams& p,
-                    const GeometryBuildResult& geo,
-                    TopologyRegistry& registry);
-```
-
-Full meshing pipeline:
-1. Calls `assign_physical_groups()` — registers YOKE, BOUNDARY_BORE, BOUNDARY_OUTER, SLOT_AIR, SLOT_INS, COIL_A/B/C ±
-2. Applies **Layer A** constant size fields per region type
-3. Applies **Layer B** mouth-transition Distance+Threshold field
-4. Applies **Layer C** bore boundary-layer field
-5. Combines all fields into a Min field and sets it as the background
-6. Sets `Mesh.Algorithm` and `Mesh.Smoothing`
-7. Calls `generate_mesh(2)` for 2-D triangulation
-8. If `n_lam > 1`, calls `generate_mesh(3)` for 3-D extrusion
-
-Returns a `MeshResult`.
-
-**MeshResult fields:**
-
-| Field | Description |
-|-------|-------------|
-| `success` | `true` if meshing completed without errors |
-| `error_message` | Non-empty on failure |
-| `n_nodes` | Total node count |
-| `n_elements_2d` | 2-D triangle / quad element count |
-| `n_elements_3d` | 3-D element count (0 for 2-D-only meshes) |
-| `min_quality` | Minimum element quality (scaled Jacobian, 0–1) |
-| `avg_quality` | Mean element quality |
-| `n_phys_groups` | Number of assigned physical groups |
-
-#### Size-field layers
-
-| Layer | Method | Effect |
-|-------|--------|--------|
-| A | `add_constant_fields()` | Per-surface constant size: YOKE→`mesh_yoke`, SLOT_AIR→`mesh_slot`, coils→`mesh_coil`, insulation→`mesh_ins` |
-| B | `add_mouth_transition_fields()` | Distance+Threshold field grading element size from `mesh_slot` to `mesh_yoke` across the slot-mouth transition zone |
-| C | `add_bore_boundary_layer()` | Boundary-layer inflation field seeded from the bore curve with `mesh_boundary_layers` inflation rows and ratio 1.2 |
-
-Physical group canonical integer tags (matching `RegionType` values):
-
-| Region | Tag |
-|--------|-----|
-| YOKE | 100 |
-| TOOTH | 101 |
-| SLOT_AIR | 200 |
-| SLOT_INS | 201 |
-| COIL_A_POS | 301 |
-| COIL_A_NEG | 302 |
-| COIL_B_POS | 303 |
-| COIL_B_NEG | 304 |
-| COIL_C_POS | 305 |
-| COIL_C_NEG | 306 |
-| BORE_AIR | 400 |
-| BOUNDARY_BORE | 500 |
-| BOUNDARY_OUTER | 501 |
-
----
-
-### ExportEngine
-
-**Header:** `include/stator/export_engine.hpp`
-
-Writes mesh output in up to four formats, each in a separate `std::async` task.
-
-#### Construction
-
-```cpp
-explicit ExportEngine(IGmshBackend* backend);
-```
-Throws `std::invalid_argument` if `backend` is null.
-
-#### ExportFormat bitmask
-
-```cpp
-enum class ExportFormat : uint32_t {
-    NONE = 0,
-    MSH  = 1 << 0,   // GMSH native mesh
-    VTK  = 1 << 1,   // VTK legacy ASCII
-    HDF5 = 1 << 2,   // HDF5 / HighFive (placeholder when STATOR_WITH_HDF5=OFF)
-    JSON = 1 << 3,   // metadata JSON
-    ALL  = MSH | VTK | HDF5 | JSON
-};
-```
-Combine formats with `|`: e.g. `ExportFormat::MSH | ExportFormat::JSON`.
-
-#### ExportConfig fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `formats` | `ExportFormat` | `ALL` | Bitmask of formats to write |
-| `output_dir` | `std::string` | `"."` | Directory for output files |
-| `msh_version` | `int` | `4` | GMSH mesh format version (2 or 4) |
-
-#### Static methods
-
-```cpp
-static std::string compute_stem(const StatorParams& p);
-```
-Computes `"stator_" + sha256(p.to_json()).substr(0, 8)`. All output files for a given `StatorParams` share this stem, making outputs deterministically named and idempotent.
-
-```cpp
-static bool outputs_exist(const StatorParams& p, const ExportConfig& cfg);
-```
-Returns `true` if every file implied by `cfg.formats` already exists on disk. Used by `BatchScheduler` to skip jobs when `skip_existing=true`.
-
-#### Write methods
-
-```cpp
-std::vector<ExportResult> write_all_sync(const StatorParams& p,
-                                          const MeshResult& mesh,
-                                          const ExportConfig& cfg);
-```
-Launches all format writers asynchronously then blocks until all complete. Returns one `ExportResult` per requested format.
-
-```cpp
-std::vector<std::future<ExportResult>> write_all_async(const StatorParams& p,
-                                                        const MeshResult& mesh,
-                                                        const ExportConfig& cfg);
-```
-Launches writers and returns futures immediately. Caller must join all futures before calling `backend->finalize()`.
-
-**ExportResult fields:**
-
-| Field | Description |
-|-------|-------------|
-| `success` | `true` if the file was written without error |
-| `format` | Which format this result describes |
-| `path` | Absolute path to the written file |
-| `error_message` | Non-empty on failure |
-| `write_time_ms` | Wall-clock write time in milliseconds |
-
-#### Output filenames
-
-| Format | Filename pattern |
-|--------|-----------------|
-| MSH | `<output_dir>/stator_<hash8>.msh` |
-| VTK | `<output_dir>/stator_<hash8>.vtk` |
-| HDF5 | `<output_dir>/stator_<hash8>.h5` |
-| JSON | `<output_dir>/stator_<hash8>_meta.json` |
-
-#### SHA-256 utility
-
-```cpp
-std::string sha256(const std::string& data);
-```
-Self-contained FIPS 180-4 SHA-256 implementation. Returns a 64-character lowercase hex string. Verifiable: `sha256("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"`.
-
----
-
-### BatchScheduler
-
-**Header:** `include/stator/batch_scheduler.hpp`
-
-Fork-based parallel job runner. Spawns one child process per job up to `max_parallel`, polls with `WNOHANG`, applies `SIGKILL` on timeout, and writes a `batch_summary.json` on completion.
-
-#### BatchJob fields
+Geometry tags produced for one slot during `GeometryBuilder.build()`.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `params` | `StatorParams` | Must have `validate_and_derive()` called before passing |
-| `export_config` | `ExportConfig` | Output directory and format mask |
-| `mesh_config` | `MeshConfig` | Mesh algorithm settings |
-| `job_id` | `std::string` | Caller-assigned identifier; echoed in status JSON and `BatchResult` |
+|---|---|---|
+| `slot_idx` | `int` | Slot index (0-based) |
+| `angle` | `float` | Rotation angle in the cross-section (radians) |
+| `slot_surface` | `int` | GMSH surface tag of the slot air cavity |
+| `coil_upper_sf` | `int` | Upper coil surface tag |
+| `coil_lower_sf` | `int` | Lower coil tag; `-1` for `SINGLE_LAYER` |
+| `ins_upper_sf` | `int` | Upper insulation surface tag |
+| `ins_lower_sf` | `int` | Lower insulation surface tag |
+| `mouth_curve_bot` | `int` | Bore-facing slot mouth edge tag |
+| `mouth_curve_top` | `int` | Inner edge of slot body (SEMI_CLOSED only) |
 
-#### BatchSchedulerConfig fields
+---
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_parallel` | `int` | `0` | Max concurrent child processes; `0` = `std::thread::hardware_concurrency()` |
-| `skip_existing` | `bool` | `true` | Skip jobs where all output files already exist |
-| `job_timeout_sec` | `int` | `300` | Send `SIGKILL` to child after this many seconds; `0` = no timeout |
-| `write_summary` | `bool` | `true` | Write `batch_summary.json` to `jobs[0].export_config.output_dir` |
+#### `GeometryBuildResult`
 
-#### Key methods
-
-```cpp
-void set_progress_callback(ProgressCallback cb);
 ```
-Register a callback invoked after each job completes:
-```cpp
-using ProgressCallback = std::function<void(
-    int jobs_done,       // number of jobs completed so far
-    int jobs_total,      // total number of jobs
-    bool success,        // whether the just-completed job succeeded
-    const std::string& job_id  // job identifier
-)>;
+class GeometryBuildResult(dataclass)
 ```
 
-```cpp
-std::vector<BatchResult> run(const std::vector<BatchJob>& jobs,
-                              const BatchSchedulerConfig& config = {});
-```
-Blocks until all jobs complete (or are cancelled). Returns one `BatchResult` per job in input order. Releases the Python GIL when called from Python.
-
-```cpp
-void cancel();
-```
-Sets the cancellation flag. Running children receive `SIGTERM`; pending jobs are marked with `error = "cancelled"`.
-
-```cpp
-bool is_running() const noexcept;
-```
-Returns `true` while `run()` is executing.
-
-#### BatchResult fields
+Return value of `GeometryBuilder.build()`.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `job_id` | `std::string` | Echoed from `BatchJob::job_id` |
-| `success` | `bool` | `true` if the full pipeline completed without error |
-| `error` | `std::string` | Error message; empty on success |
-| `msh_path` | `std::string` | Path to `.msh` output; empty if not requested or failed |
-| `vtk_path` | `std::string` | Path to `.vtk` output |
-| `hdf5_path` | `std::string` | Path to `.h5` output |
-| `json_path` | `std::string` | Path to `_meta.json` output |
-
-#### batch_summary.json format
-
-Written to `<output_dir>/batch_summary.json`:
-
-```json
-[
-  {
-    "job_id": "run_001",
-    "success": true,
-    "error": "",
-    "msh_path": "/out/stator_a1b2c3d4.msh"
-  },
-  ...
-]
-```
+|---|---|---|
+| `success` | `bool` | `True` if geometry was built without error |
+| `yoke_surface` | `int` | GMSH surface tag of the yoke annulus |
+| `bore_curve` | `int` | GMSH curve tag of the bore circle |
+| `outer_curve` | `int` | GMSH curve tag of the outer circle |
+| `n_slots` | `int` | Number of slots built |
+| `slots` | `list[SlotProfile]` | One `SlotProfile` per slot |
+| `error_message` | `str` | Non-empty only when `success=False` |
 
 ---
 
-## Python API
+#### `GeometryBuilder`
 
-Install the package (requires `_stator_core` built with `-DSTATOR_WITH_PYTHON=ON`):
-
-```bash
-pip install -e python/
+```
+class GeometryBuilder
 ```
 
-Import:
+Constructs the 2-D stator cross-section inside a GMSH OCC session.
 
 ```python
-from stator_pipeline import StatorConfig, generate_single, generate_batch
-from stator_pipeline.visualiser import StatorVisualiser
+GeometryBuilder(backend: GmshBackend) -> GeometryBuilder
 ```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `backend` | `GmshBackend` | Active GMSH backend (real or stub) |
 
 ---
 
-### StatorConfig
-
 ```python
-from stator_pipeline import StatorConfig
+GeometryBuilder.build(p: StatorParams) -> GeometryBuildResult
 ```
 
-Python `dataclass` mirroring `StatorParams`. All fields are keyword arguments with the same defaults as the C++ struct. All units are SI (metres, radians).
+Builds the full cross-section for the given parameter set.
 
-```python
-@dataclass
-class StatorConfig:
-    # Section 1 — Core radii & air gap
-    R_outer: float = 0.25
-    R_inner: float = 0.15
-    airgap_length: float = 0.001
+**Parameters**
 
-    # Section 2 — Slot geometry
-    n_slots: int = 36
-    slot_depth: float = 0.06
-    slot_width_outer: float = 0.012
-    slot_width_inner: float = 0.010
-    slot_opening: float = 0.004
-    slot_opening_depth: float = 0.003
-    tooth_tip_angle: float = 0.1
-    slot_shape: str = "SEMI_CLOSED"       # "RECTANGULAR" | "TRAPEZOIDAL" | "ROUND_BOTTOM" | "SEMI_CLOSED"
+| Name | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Validated stator parameters |
 
-    # Section 3 — Coil / winding
-    coil_depth: float = 0.05
-    coil_width_outer: float = 0.008
-    coil_width_inner: float = 0.007
-    insulation_thickness: float = 0.001
-    turns_per_coil: int = 10
-    coil_pitch: int = 5
-    wire_diameter: float = 0.001
-    slot_fill_factor: float = 0.45
-    winding_type: str = "DOUBLE_LAYER"    # "SINGLE_LAYER" | "DOUBLE_LAYER" | "CONCENTRATED" | "DISTRIBUTED"
+**Returns** `GeometryBuildResult`
 
-    # Section 4 — Lamination stack
-    t_lam: float = 0.00035
-    n_lam: int = 200
-    z_spacing: float = 0.0
-    insulation_coating_thickness: float = 0.00005
-    material: str = "M270_35A"            # "M270_35A" | "M330_50A" | "M400_50A" | "NO20" | "CUSTOM"
-    material_file: str = ""
+**Build sequence**
 
-    # Section 5 — Mesh sizing
-    mesh_yoke: float = 0.006
-    mesh_slot: float = 0.003
-    mesh_coil: float = 0.0015
-    mesh_ins: float = 0.0007
-    mesh_boundary_layers: int = 3
-    mesh_curvature: float = 0.3
-    mesh_transition_layers: int = 2
-```
-
-**Enum fields** (`slot_shape`, `winding_type`, `material`) accept case-sensitive string names matching the C++ enum value names listed above.
+1. Add outer and inner circles.
+2. Boolean-cut to produce the yoke annulus.
+3. For each slot, call the shape-specific builder (`_build_rectangular`,
+   `_build_trapezoidal`, `_build_round_bottom`, or `_build_semi_closed`).
+4. Boolean-cut all slot cavities from the yoke.
+5. Build coil surfaces (`_build_coil`) and insulation surfaces
+   (`_build_insulation`) inside each slot.
+6. Call `backend.synchronize()`.
 
 ---
 
-### generate_single
+### topology_registry
 
-```python
-def generate_single(
-    config: StatorConfig,
-    output_dir: str,
-    formats: str = "JSON|HDF5",
-) -> dict
+#### `SlotWindingAssignment`
+
+```
+class SlotWindingAssignment(dataclass)
 ```
 
-Generate a mesh for a single stator configuration.
+Winding phase assignment for one slot, produced by
+`TopologyRegistry.assign_winding_layout()`.
 
-**Arguments:**
+| Field | Type | Description |
+|---|---|---|
+| `slot_idx` | `int` | Slot index (0-based) |
+| `upper_tag` | `int` | GMSH surface tag of upper coil |
+| `lower_tag` | `int` | GMSH surface tag of lower coil; `-1` for `SINGLE_LAYER` |
+| `upper_phase` | `RegionType` | Phase assignment for upper coil |
+| `lower_phase` | `RegionType` | Phase assignment for lower coil; `UNKNOWN` for `SINGLE_LAYER` |
+
+---
+
+#### `TopologyRegistry`
+
+```
+class TopologyRegistry
+```
+
+Thread-safe registry mapping GMSH entity tags to stator regions.  Protected
+internally by a reentrant lock (`threading.RLock`).
+
+```python
+TopologyRegistry(n_slots: int) -> TopologyRegistry
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `n_slots` | `int` | Number of stator slots; must be > 0 |
+
+**Raises** `ValueError` if `n_slots ≤ 0`.
+
+---
+
+```python
+TopologyRegistry.register_surface(
+    region_type: RegionType,
+    gmsh_tag: int,
+    slot_idx: int = -1
+) -> None
+```
+
+Register a GMSH 2-D surface tag.
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `config` | `StatorConfig` | required | Stator geometry and mesh settings |
-| `output_dir` | `str` | required | Directory where output files are written (created if absent) |
-| `formats` | `str` | `"JSON|HDF5"` | `\|`-separated list of export formats: any combination of `MSH`, `VTK`, `HDF5`, `JSON`, or `ALL` |
+|---|---|---|---|
+| `region_type` | `RegionType` | — | Region the surface belongs to |
+| `gmsh_tag` | `int` | — | GMSH surface tag |
+| `slot_idx` | `int` | `-1` | Slot index for slot-specific regions |
 
-**Returns:** `dict` with keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `success` | `bool` | `True` if the full pipeline completed |
-| `output_dir` | `str` | Echo of the requested output directory |
-| `job_id` | `str` | `"single"` |
-| `error` | `str` | Error message; empty on success |
-| `msh_path` | `str` | Path to `.msh` file (empty if not requested) |
-| `vtk_path` | `str` | Path to `.vtk` file |
-| `hdf5_path` | `str` | Path to `.h5` file |
-| `json_path` | `str` | Path to `_meta.json` file |
-
-**Raises:** `ImportError` if `_stator_core` is not available (library not built).
-
-**Example:**
+---
 
 ```python
-from stator_pipeline import StatorConfig, generate_single
+TopologyRegistry.register_slot_coil(
+    slot_idx: int,
+    upper_tag: int,
+    lower_tag: int
+) -> None
+```
 
-cfg = StatorConfig(n_slots=24, R_outer=0.20, R_inner=0.12, slot_shape="TRAPEZOIDAL")
-result = generate_single(cfg, output_dir="/tmp/stator_out", formats="MSH|VTK|JSON")
+Register the coil surface tags for one slot.
 
-if result["success"]:
-    print("Mesh written to:", result["msh_path"])
-else:
-    print("Failed:", result["error"])
+| Parameter | Type | Description |
+|---|---|---|
+| `slot_idx` | `int` | Slot index |
+| `upper_tag` | `int` | Upper coil GMSH surface tag |
+| `lower_tag` | `int` | Lower coil GMSH surface tag (`-1` = none) |
+
+**Raises** `IndexError` if `slot_idx` is out of range.
+
+---
+
+```python
+TopologyRegistry.register_boundary_curve(
+    region_type: RegionType,
+    gmsh_curve: int
+) -> None
+```
+
+Register a boundary curve tag.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `region_type` | `RegionType` | Must be `BOUNDARY_BORE` or `BOUNDARY_OUTER` |
+| `gmsh_curve` | `int` | GMSH curve tag |
+
+**Raises** `ValueError` if `region_type` is not a boundary type.
+
+---
+
+```python
+TopologyRegistry.assign_winding_layout(winding_type: WindingType) -> None
+```
+
+Compute and store the 3-phase winding assignment for all registered slots.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `winding_type` | `WindingType` | Winding configuration |
+
+**Phase patterns (slot index mod 6):**
+
+| Index mod 6 | DISTRIBUTED / DOUBLE_LAYER | CONCENTRATED | SINGLE_LAYER |
+|---|---|---|---|
+| 0 | A+ | A+ | A+ (lower = UNKNOWN) |
+| 1 | B− | A− | B+ |
+| 2 | C+ | B+ | C+ |
+| 3 | A− | B− | A+ |
+| 4 | B+ | C+ | B+ |
+| 5 | C− | C− | C+ |
+
+**Raises** `RuntimeError` if no coil surfaces have been registered.
+
+---
+
+```python
+TopologyRegistry.get_surfaces(region_type: RegionType) -> list[int]
+```
+
+**Returns** list of GMSH surface tags registered under `region_type`.
+
+---
+
+```python
+TopologyRegistry.get_boundary_curves(region_type: RegionType) -> list[int]
+```
+
+**Returns** list of boundary curve tags for `region_type`.
+
+---
+
+```python
+TopologyRegistry.get_slot_assignment(slot_idx: int) -> SlotWindingAssignment
+```
+
+**Returns** winding assignment for one slot.
+
+**Raises** `RuntimeError` if `assign_winding_layout` has not been called.
+**Raises** `IndexError` if `slot_idx` is out of range.
+
+**Properties**
+
+| Name | Type | Description |
+|---|---|---|
+| `total_surfaces` | `int` | Total count of registered surfaces |
+| `winding_assigned` | `bool` | Whether winding layout has been assigned |
+| `winding_assignments` | `list[Optional[SlotWindingAssignment]]` | All slot assignments |
+
+---
+
+### gmsh_backend
+
+#### `GmshBackend` (abstract)
+
+```
+class GmshBackend(ABC)
+```
+
+Abstract interface for all geometry and mesh backends.  Concrete
+implementations are the real GMSH backend (when `gmsh` is installed) and the
+`StubGmshBackend` used for testing.
+
+**Session lifecycle**
+
+```python
+GmshBackend.initialize(model_name: str) -> None
+GmshBackend.synchronize() -> None
+GmshBackend.finalize() -> None
+GmshBackend.set_option(name: str, value: float) -> None
+```
+
+**Geometry primitives** — each returns a new integer entity tag.
+
+```python
+GmshBackend.add_point(x: float, y: float, z: float, mesh_size: float) -> int
+GmshBackend.add_line(start: int, end: int) -> int
+GmshBackend.add_circle(cx: float, cy: float, cz: float, r: float) -> int
+GmshBackend.add_arc(start: int, centre: int, end: int) -> int
+GmshBackend.add_curve_loop(tags: list[int]) -> int
+GmshBackend.add_plane_surface(loop_tags: list[int]) -> int
+```
+
+**Boolean operations** — return surviving `(dim, tag)` pairs.
+
+```python
+GmshBackend.boolean_cut(
+    objects: list[tuple[int, int]],
+    tools: list[tuple[int, int]],
+    remove_tool: bool = False
+) -> list[tuple[int, int]]
+
+GmshBackend.boolean_fragment(
+    objects: list[tuple[int, int]],
+    tools: list[tuple[int, int]]
+) -> list[tuple[int, int]]
+```
+
+**Physical groups and mesh fields**
+
+```python
+GmshBackend.add_physical_group(dim: int, tags: list[int], name: str, tag: int = -1) -> int
+GmshBackend.add_math_eval_field(expr: str) -> int
+GmshBackend.add_constant_field(value: float, surfaces: list[int]) -> int
+GmshBackend.set_background_field(field_tag: int) -> None
+```
+
+**Mesh I/O**
+
+```python
+GmshBackend.generate_mesh(dim: int) -> None
+GmshBackend.write_mesh(filename: str) -> None
+GmshBackend.get_entities_2d() -> list[tuple[int, int]]
 ```
 
 ---
 
-### generate_batch
+#### `StubGmshBackend`
 
-```python
-def generate_batch(
-    configs: list[StatorConfig],
-    output_dir: str,
-    max_parallel: int = 0,
-    formats: str = "MSH|VTK|HDF5|JSON",
-    progress_callback: callable | None = None,
-    skip_existing: bool = True,
-    job_timeout_sec: int = 300,
-) -> list[dict]
+```
+class StubGmshBackend(GmshBackend)
 ```
 
-Generate meshes for a list of stator configurations in parallel using fork-based workers.
+In-memory stub — no GMSH installation required.  Used by the test suite and
+as the default when `gmsh` is not importable.
 
-**Arguments:**
+- `add_point`, `add_line`, `add_circle`, `add_arc` return monotonically
+  increasing integer tags.
+- `boolean_cut` returns the `objects` list unchanged.
+- `boolean_fragment` returns the union of `objects` and `tools`.
+- All other methods are no-ops or record state for inspection.
+
+---
+
+#### `make_default_backend`
+
+```python
+stator_pipeline.make_default_backend() -> GmshBackend
+```
+
+Returns a `StubGmshBackend`.  When a real GMSH backend is registered it will
+be returned instead.
+
+---
+
+### mesh_generator
+
+#### `MeshConfig`
+
+```
+class MeshConfig(dataclass)
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `algorithm_2d` | `int` | `6` | GMSH 2-D meshing algorithm (6 = Frontal-Delaunay) |
+| `smoothing_passes` | `int` | `5` | Laplacian smoothing iterations after generation |
+
+---
+
+#### `MeshResult`
+
+```
+class MeshResult(dataclass)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | `bool` | `True` if meshing completed without error |
+| `n_nodes` | `int` | Total node count |
+| `n_elements_2d` | `int` | Number of 2-D triangles / quads |
+| `n_elements_3d` | `int` | Number of 3-D elements (`0` for 2-D-only meshes) |
+| `min_quality` | `float` | Minimum element quality metric `[0, 1]` |
+| `avg_quality` | `float` | Average element quality metric `[0, 1]` |
+| `n_phys_groups` | `int` | Number of physical groups assigned |
+| `error_message` | `str` | Non-empty only when `success=False` |
+
+---
+
+#### `MeshGenerator`
+
+```
+class MeshGenerator
+```
+
+```python
+MeshGenerator(
+    backend: GmshBackend,
+    config: MeshConfig | None = None
+) -> MeshGenerator
+```
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `configs` | `list[StatorConfig]` | required | One `StatorConfig` per job |
-| `output_dir` | `str` | required | Common output directory for all jobs |
-| `max_parallel` | `int` | `0` | Maximum worker processes; `0` = CPU count |
-| `formats` | `str` | `"MSH\|VTK\|HDF5\|JSON"` | Export formats (see `generate_single`) |
-| `progress_callback` | `callable` or `None` | `None` | Called after each job: `fn(jobs_done, jobs_total, success, job_id)` |
-| `skip_existing` | `bool` | `True` | Skip jobs where output files already exist (idempotent re-runs) |
-| `job_timeout_sec` | `int` | `300` | Kill worker after this many seconds; `0` = no timeout |
+|---|---|---|---|
+| `backend` | `GmshBackend` | — | Active GMSH backend |
+| `config` | `MeshConfig \| None` | `None` | Uses `MeshConfig()` if `None` |
 
-**Returns:** `list[dict]`, one entry per input config, in order. Each dict has the same keys as `generate_single`'s return value, plus `job_id` set to `"batch_<index>"`.
-
-**Note:** The Python GIL is released for the duration of the C++ batch execution. The `progress_callback` is called from the C++ layer — ensure it is thread-safe if it mutates shared state.
-
-**Example:**
+---
 
 ```python
-from stator_pipeline import StatorConfig, generate_batch
+MeshGenerator.assign_physical_groups(
+    p: StatorParams,
+    geo: GeometryBuildResult,
+    registry: TopologyRegistry
+) -> None
+```
 
-configs = [
-    StatorConfig(n_slots=24, slot_depth=0.05 + i * 0.005)
-    for i in range(8)
-]
+Registers all GMSH physical groups from a completed geometry build.
 
-def on_progress(done, total, ok, job_id):
-    print(f"[{done}/{total}] {job_id} {'OK' if ok else 'FAIL'}")
+| Parameter | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Stator parameters |
+| `geo` | `GeometryBuildResult` | Geometry build result |
+| `registry` | `TopologyRegistry` | Registry to populate |
 
-results = generate_batch(
-    configs,
-    output_dir="/tmp/batch_out",
-    max_parallel=4,
-    formats="MSH|JSON",
-    progress_callback=on_progress,
-)
+**Actions**
+1. Register yoke surface as `YOKE`.
+2. Register bore and outer boundary curves.
+3. Register slot air and insulation surfaces.
+4. Aggregate coil surfaces by phase and register them.
+5. Add each region as a named GMSH physical group.
 
-passed = sum(1 for r in results if r["success"])
-print(f"{passed}/{len(results)} jobs succeeded")
+---
+
+```python
+MeshGenerator.generate(
+    p: StatorParams,
+    geo: GeometryBuildResult,
+    registry: TopologyRegistry
+) -> MeshResult
+```
+
+Full mesh generation pipeline.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Stator parameters |
+| `geo` | `GeometryBuildResult` | Completed geometry |
+| `registry` | `TopologyRegistry` | Topology registry (populated in place) |
+
+**Returns** `MeshResult`
+
+**Generation sequence**
+
+1. Check `geo.success`; return failure result immediately if false.
+2. Call `assign_physical_groups`.
+3. Apply Layer A — constant element-size fields per region.
+4. Apply Layer B — mouth transition threshold field.
+5. Apply Layer C — bore boundary-layer field.
+6. Combine fields with Min operation and set as background field.
+7. Set algorithm and smoothing options.
+8. Generate 2-D mesh (`dim=2`).
+9. If `n_lam > 1`, extrude and generate 3-D mesh.
+
+---
+
+### export_engine
+
+#### `ExportConfig`
+
+```
+class ExportConfig(dataclass)
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `output_dir` | `str` | `"/tmp/stator_out"` | Output directory (created if absent) |
+| `formats` | `ExportFormat` | `ExportFormat.JSON` | Format bitmask |
+
+---
+
+#### `ExportResult`
+
+```
+class ExportResult(dataclass)
+```
+
+Result for a single written file.
+
+| Field | Type | Description |
+|---|---|---|
+| `format` | `ExportFormat` | Which format this result covers |
+| `path` | `str` | Absolute path of the written file |
+| `success` | `bool` | Write succeeded |
+| `write_time_ms` | `float` | Wall-clock time for the write (ms) |
+| `error_message` | `str` | Non-empty only when `success=False` |
+
+---
+
+#### `ExportEngine`
+
+```
+class ExportEngine
+```
+
+```python
+ExportEngine(backend: GmshBackend) -> ExportEngine
 ```
 
 ---
 
-### StatorVisualiser
-
 ```python
-from stator_pipeline.visualiser import StatorVisualiser
+ExportEngine.write_all(
+    p: StatorParams,
+    mesh: MeshResult,
+    cfg: ExportConfig
+) -> list[ExportResult]
 ```
 
-Renders stator cross-section and mesh quality plots from VTK output files. Requires `matplotlib`. Optionally uses the `vtk` library for parsing; falls back to a built-in VTK legacy ASCII parser.
+Write all requested output formats.
 
-#### Construction
+| Parameter | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Stator parameters (encoded in file names and JSON) |
+| `mesh` | `MeshResult` | Mesh statistics to embed in JSON |
+| `cfg` | `ExportConfig` | Output directory and format selection |
 
-```python
-vis = StatorVisualiser()
+**Returns** `list[ExportResult]` — one entry per format bit set in `cfg.formats`.
+
+**Output file naming** — files share a deterministic 8-character stem derived
+from the SHA-256 hash of the serialised parameters:
+
+```
+stator_<hash8>.msh
+stator_<hash8>.vtk
+stator_<hash8>.h5
+stator_<hash8>_meta.json
 ```
 
-No arguments. Availability of optional libraries (`matplotlib`, `vtk`) is checked at construction time.
-
-#### Methods
-
-```python
-def plot_cross_section(vtk_path: str, output_png: str | None = None) -> None
-```
-Renders the 2-D stator cross-section with cells coloured by region type.
-
-| Parameter | Description |
-|-----------|-------------|
-| `vtk_path` | Path to the `.vtk` file written by `ExportEngine` |
-| `output_png` | If given, save the figure to this PNG path instead of displaying interactively |
-
-Raises `ImportError` if `matplotlib` is not installed.
-
-```python
-def plot_mesh(vtk_path: str, show_quality: bool = True) -> None
-```
-Renders mesh elements coloured by element quality scalar (green = good, red = poor).
-
-| Parameter | Description |
-|-----------|-------------|
-| `vtk_path` | Path to the `.vtk` file |
-| `show_quality` | If `True`, colour by element quality; if `False`, colour by region |
-
-**Region colour map:**
-
-| Region | Hex colour |
-|--------|-----------|
-| YOKE | `#4a90d9` (steel blue) |
-| TOOTH | `#2c5f8a` (dark blue) |
-| SLOT_AIR | `#b0d4f1` (light blue) |
-| SLOT_INS | `#f5e642` (yellow) |
-| COIL_A_POS | `#e63946` (red) |
-| COIL_A_NEG | `#ff8fa3` (pink) |
-| COIL_B_POS | `#2a9d8f` (teal) |
-| COIL_B_NEG | `#80cdc1` (light teal) |
-| COIL_C_POS | `#f4a261` (orange) |
-| COIL_C_NEG | `#ffd6a5` (pale orange) |
-| BORE_AIR | `#e8f4f8` (near-white) |
-| BOUNDARY_BORE | `#264653` (dark teal) |
-| BOUNDARY_OUTER | `#1a1a2e` (near-black) |
-
----
-
-### Low-level _stator_core bindings
-
-The `_stator_core` extension module exposes the C++ types directly for advanced usage.
-
-#### Enumerations
-
-```python
-import _stator_core as core
-
-core.SlotShape.RECTANGULAR
-core.SlotShape.TRAPEZOIDAL
-core.SlotShape.ROUND_BOTTOM
-core.SlotShape.SEMI_CLOSED
-
-core.WindingType.SINGLE_LAYER
-core.WindingType.DOUBLE_LAYER
-core.WindingType.CONCENTRATED
-core.WindingType.DISTRIBUTED
-
-core.LaminationMaterial.M270_35A
-core.LaminationMaterial.M330_50A
-core.LaminationMaterial.M400_50A
-core.LaminationMaterial.NO20
-core.LaminationMaterial.CUSTOM
-
-core.ExportFormat.NONE
-core.ExportFormat.MSH
-core.ExportFormat.VTK
-core.ExportFormat.HDF5
-core.ExportFormat.JSON
-core.ExportFormat.ALL
-```
-
-#### StatorParams
-
-```python
-p = core.StatorParams()
-p.R_outer = 0.20
-p.n_slots  = 24
-p.slot_shape = core.SlotShape.TRAPEZOIDAL
-p.validate_and_derive()
-json_str = p.to_json()
-repr(p)  # "<StatorParams n_slots=24>"
-
-# Read-only derived fields (after validate_and_derive):
-p.yoke_height
-p.tooth_width
-p.slot_pitch
-p.stack_length
-p.fill_factor
-```
-
-#### ExportConfig
-
-```python
-cfg = core.ExportConfig()
-cfg.formats    = core.ExportFormat.MSH | core.ExportFormat.JSON
-cfg.output_dir = "/tmp/out"
-cfg.msh_version = 4
-```
-
-#### MeshConfig
-
-```python
-mc = core.MeshConfig()
-mc.algorithm_2d = 5
-mc.smoothing_passes = 3
-mc.periodic = False
-```
-
-#### BatchJob
-
-```python
-job = core.BatchJob()
-job.params        = p          # core.StatorParams
-job.export_config = cfg        # core.ExportConfig
-job.mesh_config   = mc         # core.MeshConfig
-job.job_id        = "my_job"
-```
-
-#### BatchScheduler
-
-```python
-sched = core.BatchScheduler()
-
-# Optional progress callback
-def cb(done, total, ok, job_id):
-    print(done, total, ok, job_id)
-sched.set_progress_callback(cb)
-
-# Run — GIL is released during execution
-results = sched.run(jobs, sched_cfg)   # list[BatchResult]
-
-sched.cancel()
-sched.is_running()  # bool
-```
-
-#### BatchSchedulerConfig
-
-```python
-sched_cfg = core.BatchSchedulerConfig()
-sched_cfg.max_parallel    = 4
-sched_cfg.skip_existing   = True
-sched_cfg.job_timeout_sec = 120
-sched_cfg.write_summary   = True
-```
-
-#### BatchResult (read-only)
-
-```python
-r = results[0]
-r.job_id     # str
-r.success    # bool
-r.error      # str
-r.msh_path   # str
-r.vtk_path   # str
-r.hdf5_path  # str
-r.json_path  # str
-```
-
-#### Free functions
-
-```python
-p = core.make_reference_params()  # validated 36-slot reference design
-p = core.make_minimal_params()    # validated 12-slot minimal design
-h = core.sha256("hello")          # 64-char hex SHA-256 digest
-```
-
----
-
-## Enumerations Reference
-
-### SlotShape
-
-| Value | C++ | Python string | Description |
-|-------|-----|---------------|-------------|
-| `RECTANGULAR` | `SlotShape::RECTANGULAR` | `"RECTANGULAR"` | All four corners at 90°; uniform width `slot_width_outer` |
-| `TRAPEZOIDAL` | `SlotShape::TRAPEZOIDAL` | `"TRAPEZOIDAL"` | Narrower at bore (`slot_width_inner`), wider at yoke |
-| `ROUND_BOTTOM` | `SlotShape::ROUND_BOTTOM` | `"ROUND_BOTTOM"` | Trapezoidal with circular arc at the bottom |
-| `SEMI_CLOSED` | `SlotShape::SEMI_CLOSED` | `"SEMI_CLOSED"` | Narrow mouth opening (`slot_opening`) for reduced cogging torque |
-
-### WindingType
-
-| Value | Description |
-|-------|-------------|
-| `SINGLE_LAYER` | One coil conductor per slot; lower coil tag is `-1` |
-| `DOUBLE_LAYER` | Two coil conductors per slot (upper/lower); uses DISTRIBUTED phase sequence |
-| `CONCENTRATED` | Short-pitch concentrated winding; phase sequence A+A−B+B−C+C− |
-| `DISTRIBUTED` | Distributed winding; phase sequence A+B−C+A−B+C− |
-
-### LaminationMaterial
-
-| Value | Grade | Typical loss at 1T/50Hz |
-|-------|-------|------------------------|
-| `M270_35A` | 0.35 mm high-grade | 2.70 W/kg |
-| `M330_50A` | 0.50 mm standard | 3.30 W/kg |
-| `M400_50A` | 0.50 mm economy | 4.00 W/kg |
-| `NO20` | 0.20 mm non-oriented | ~2.0 W/kg |
-| `CUSTOM` | User-supplied B-H curve | Loaded from `material_file` |
-
-### ExportFormat (bitmask)
-
-| Value | Bit | File extension | Notes |
-|-------|-----|---------------|-------|
-| `NONE` | 0 | — | No export |
-| `MSH` | 0 | `.msh` | GMSH native; version controlled by `msh_version` |
-| `VTK` | 1 | `.vtk` | Legacy ASCII VTK UNSTRUCTURED_GRID |
-| `HDF5` | 2 | `.h5` | HighFive HDF5; placeholder text file when `STATOR_WITH_HDF5=OFF` |
-| `JSON` | 3 | `_meta.json` | Mesh statistics + parameters + output file paths |
-| `ALL` | — | all four | Shorthand for `MSH\|VTK\|HDF5\|JSON` |
-
----
-
-## Output File Formats
-
-### _meta.json
+**JSON metadata structure**
 
 ```json
 {
-  "params": { ... all StatorParams fields ... },
-  "mesh_stats": {
-    "n_nodes": 12345,
-    "n_elements_2d": 23456,
-    "n_elements_3d": 0,
-    "min_quality": 0.52,
-    "avg_quality": 0.81
+  "stem": "stator_a1b2c3d4",
+  "params": { "R_outer": 0.65, "n_slots": 48, ... },
+  "derived": {
+    "yoke_height": 0.11,
+    "tooth_width": 0.023,
+    "slot_pitch": 0.1309,
+    "stack_length": 0.70,
+    "fill_factor": 0.38
   },
-  "output_files": {
-    "msh":  "/out/stator_a1b2c3d4.msh",
-    "vtk":  "/out/stator_a1b2c3d4.vtk",
-    "hdf5": "/out/stator_a1b2c3d4.h5",
-    "json": "/out/stator_a1b2c3d4_meta.json"
+  "mesh": {
+    "n_nodes": 0,
+    "n_elements_2d": 0,
+    "min_quality": 0.0,
+    "avg_quality": 0.0
   }
 }
 ```
 
-### batch_summary.json
+---
 
-```json
-[
-  { "job_id": "batch_0", "success": true,  "error": "", "msh_path": "/out/stator_a1b2c3d4.msh" },
-  { "job_id": "batch_1", "success": false, "error": "Geometry build failed: ...", "msh_path": "" }
-]
+#### `sha256`
+
+```python
+stator_pipeline.sha256(data: str) -> str
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `data` | `str` | UTF-8 string to hash |
+
+**Returns** 64-character lowercase hexadecimal SHA-256 digest.
+
+---
+
+#### `compute_stem`
+
+```python
+stator_pipeline.compute_stem(p: StatorParams) -> str
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `p` | `StatorParams` | Stator parameters |
+
+**Returns** `"stator_" + sha256(json_dump(p))[:8]` — deterministic 15-character
+stem used in output file names.
+
+---
+
+#### `outputs_exist`
+
+```python
+stator_pipeline.outputs_exist(p: StatorParams, cfg: ExportConfig) -> bool
+```
+
+Check whether all requested output files for `p` already exist in `cfg.output_dir`.
+
+**Returns** `True` only if every file corresponding to every set bit in
+`cfg.formats` is present on disk.
+
+---
+
+### pipeline — high-level API
+
+The pipeline module provides the recommended entry point for most use cases.
+
+#### `validate_config`
+
+```python
+stator_pipeline.validate_config(cfg: StatorParams) -> dict[str, Any]
+```
+
+Validate a parameter set and return a result dictionary.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `cfg` | `StatorParams` | Parameters to validate |
+
+**Returns** `dict` with the following keys:
+
+| Key | Type | Present when | Description |
+|---|---|---|---|
+| `success` | `bool` | always | `True` if all 15 rules passed |
+| `error` | `str` | `success=False` | Human-readable error message |
+| `yoke_height` | `float` | `success=True` | Derived yoke height (m) |
+| `tooth_width` | `float` | `success=True` | Derived tooth width (m) |
+| `slot_pitch` | `float` | `success=True` | Derived slot pitch (radians) |
+| `stack_length` | `float` | `success=True` | Derived stack length (m) |
+| `fill_factor` | `float` | `success=True` | Derived fill factor |
+
+---
+
+#### `generate_single`
+
+```python
+stator_pipeline.generate_single(
+    config: StatorParams,
+    output_dir: str,
+    formats: str | int = "JSON"
+) -> dict[str, Any]
+```
+
+Run the full pipeline for a single stator configuration.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `config` | `StatorParams` | — | Stator parameters |
+| `output_dir` | `str` | — | Output directory (created if absent) |
+| `formats` | `str \| int` | `"JSON"` | Format string, pipe-separated (`"MSH\|VTK"`) or integer bitmask |
+
+**Recognized format strings** (case-insensitive, pipe-separated):
+`"MSH"`, `"VTK"`, `"HDF5"`, `"JSON"`, `"ALL"`
+
+**Returns** `dict` with the following keys:
+
+| Key | Type | Present when | Description |
+|---|---|---|---|
+| `success` | `bool` | always | |
+| `error` | `str` | `success=False` | |
+| `yoke_height` | `float` | `success=True` | |
+| `tooth_width` | `float` | `success=True` | |
+| `slot_pitch` | `float` | `success=True` | |
+| `stack_length` | `float` | `success=True` | |
+| `fill_factor` | `float` | `success=True` | |
+| `output_dir` | `str` | `success=True` | |
+| `formats` | `int` | `success=True` | Resolved bitmask |
+| `stem` | `str` | `success=True` | File name stem |
+| `json_path` | `str` | JSON in formats | Absolute path to `_meta.json` |
+
+**Pipeline steps**
+
+1. `validate_config` — fail fast on invalid parameters.
+2. Create `output_dir`.
+3. Compute deterministic stem via `compute_stem`.
+4. Write JSON metadata.
+5. If formats include MSH / VTK / HDF5: run geometry → mesh → export.
+6. Finalize the GMSH backend.
+
+---
+
+#### `generate_batch`
+
+```python
+stator_pipeline.generate_batch(
+    configs: list[StatorParams],
+    output_dir: str,
+    max_parallel: int = 0,
+    formats: str | int = "MSH|VTK|HDF5|JSON",
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    skip_existing: bool = True,
+    job_timeout_sec: int = 300
+) -> list[dict[str, Any]]
+```
+
+Run the pipeline for a list of configurations.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `configs` | `list[StatorParams]` | — | Parameter sets |
+| `output_dir` | `str` | — | Shared output directory |
+| `max_parallel` | `int` | `0` | Reserved for future parallel execution |
+| `formats` | `str \| int` | `"MSH\|VTK\|HDF5\|JSON"` | Format specification |
+| `progress_callback` | `Callable \| None` | `None` | Called after each job: `callback(done, total, job_id)` |
+| `skip_existing` | `bool` | `True` | Skip if output files already exist |
+| `job_timeout_sec` | `int` | `300` | Reserved; not currently enforced |
+
+**Returns** `list[dict]` — one result dict per input config, in the same order.
+Each dict has all keys from `generate_single` plus `job_id: str`
+(`"batch_0"`, `"batch_1"`, …).
+
+---
+
+### batch_scheduler
+
+The `BatchScheduler` provides parallel execution via `ProcessPoolExecutor`.
+
+#### `BatchJob`
+
+```
+class BatchJob(dataclass)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `job_id` | `str` | User-assigned identifier |
+| `params` | `StatorParams` | Stator parameters |
+| `export_config` | `ExportConfig` | Output directory and format selection |
+
+---
+
+#### `BatchConfig`
+
+```
+class BatchConfig(dataclass)
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_parallel` | `int` | `0` | Worker count; `0` = CPU count |
+| `skip_existing` | `bool` | `True` | Skip jobs whose output files exist |
+| `job_timeout_sec` | `int` | `300` | Per-job timeout (reserved) |
+| `write_summary` | `bool` | `True` | Write `batch_summary.json` on completion |
+
+---
+
+#### `BatchResult`
+
+```
+class BatchResult(dataclass)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `job_id` | `str` | Job identifier |
+| `success` | `bool` | Job completed without error |
+| `error` | `str` | Error message when `success=False` |
+| `msh_path` | `str` | Path to `.msh` output (empty if not requested) |
+| `vtk_path` | `str` | Path to `.vtk` output |
+| `hdf5_path` | `str` | Path to `.h5` output |
+| `json_path` | `str` | Path to `_meta.json` output |
+
+---
+
+#### `BatchScheduler`
+
+```
+class BatchScheduler
+```
+
+```python
+BatchScheduler() -> BatchScheduler
 ```
 
 ---
 
-## Testing
-
-The test suite uses a hand-rolled framework (no external test library required).
-
-```bash
-# Build (stub backend, no GMSH required)
-cmake -B build && cmake --build build --parallel
-
-# Run all tests
-./build/test_stator
-
-# Via CTest
-ctest --test-dir build --output-on-failure
+```python
+BatchScheduler.cancel() -> None
 ```
 
-**Expected output:**
+Signal all pending jobs to abort.  Jobs already running in subprocesses are
+not interrupted; only jobs not yet submitted are skipped.
+
+---
+
+```python
+BatchScheduler.run(
+    jobs: list[BatchJob],
+    config: BatchConfig,
+    progress_callback: Callable[[int, int, bool, str], None] | None = None
+) -> list[BatchResult]
 ```
-=== Results: PASS=150 FAIL=0 ===
+
+Execute jobs in parallel.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `jobs` | `list[BatchJob]` | — | Jobs to run |
+| `config` | `BatchConfig` | — | Scheduling configuration |
+| `progress_callback` | `Callable \| None` | `None` | Called after each job: `callback(done, total, success, job_id)` |
+
+**Returns** `list[BatchResult]` in the same order as `jobs`.
+
+**Execution sequence**
+
+1. Filter `skip_existing` jobs — mark as success immediately, don't submit.
+2. Submit remaining jobs to `ProcessPoolExecutor`.
+3. Collect `Future` results as they complete.
+4. Optionally write `batch_summary.json`.
+5. Return all results in input order.
+
+---
+
+### visualiser
+
+#### `StatorVisualiser`
+
+```
+class StatorVisualiser
 ```
 
-Test groups and counts:
+```python
+StatorVisualiser() -> StatorVisualiser
+```
 
-| Group | Tests | What is verified |
-|-------|-------|-----------------|
-| `[PARAMS]` | 31 | All 16 validation rules, derived field computation, JSON serialisation, factory functions |
-| `[TOPOLOGY]` | 22 | Registration, winding phase sequences for all 4 types, thread-safety, boundary curves |
-| `[GEOMETRY]` | 32 | All 4 slot shapes, coil placement (single/double), insulation, rotation, backend call counts |
-| `[MESH]` | 16 | Physical group assignment, size-field layers, algorithm settings, 3-D extrusion path |
-| `[EXPORT]` | 22 | SHA-256 correctness, stem derivation, all 4 format writers, async/sync consistency, `outputs_exist` |
-| `[BATCH]` | 10 | Fork dispatch, cancel flag, `skip_existing`, timeout path, summary JSON |
-| `[3D_EXTRUSION]` | 7 | Stack length computation, `layers_per_lam` config, 3-D element counts, VTK/JSON export of extruded mesh |
-| `[INTEGRATION]` | 10 | Full pipeline from `make_reference_params()` through export |
+Raises `ImportError` if `matplotlib` is not installed.
 
-The stub-backend warnings (`[stator] Warning: STATOR_WITH_GMSH not defined`) are expected and do not indicate test failures.
+---
+
+```python
+StatorVisualiser.plot_cross_section(
+    vtk_path: str,
+    output_png: str | None = None
+) -> None
+```
+
+Render the 2-D cross-section coloured by physical region.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `vtk_path` | `str` | — | Path to a `.vtk` file produced by `ExportEngine` |
+| `output_png` | `str \| None` | `None` | Save to this path; if `None`, call `plt.show()` |
+
+**Region colour scheme**
+
+| Region | Colour |
+|---|---|
+| Yoke | `#4a90d9` (blue) |
+| Slot air | `#b0d4f1` (light blue) |
+| Insulation | `#f5e642` (yellow) |
+| Coil A+ | `#e63946` (red) |
+| Coil A− | `#ff8fa3` (light red) |
+| Coil B+ | `#2a9d8f` (teal) |
+| Coil B− | `#80cdc1` (light teal) |
+| Coil C+ | `#f4a261` (orange) |
+| Coil C− | `#ffd6a5` (light orange) |
+
+---
+
+```python
+StatorVisualiser.plot_mesh(
+    vtk_path: str,
+    show_quality: bool = True
+) -> None
+```
+
+Render each mesh element coloured by quality.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `vtk_path` | `str` | — | Path to `.vtk` file |
+| `show_quality` | `bool` | `True` | Colour by quality; `False` colours by region scalar |
+
+Requires `matplotlib` and `numpy`.
 
 ---
 
 ## Examples
 
-### Single geometry (Python)
+### single_geometry.py
 
-```python
-from stator_pipeline import StatorConfig, generate_single
+Generates and visualises one stator cross-section sized for a large high-voltage
+asynchronous generator (4-pole, 6–11 kV, power-station duty).
 
-# 24-slot TRAPEZOIDAL single-layer design
-cfg = StatorConfig(
-    n_slots=24,
-    R_outer=0.18,
-    R_inner=0.11,
-    slot_depth=0.048,
-    slot_shape="TRAPEZOIDAL",
-    winding_type="SINGLE_LAYER",
-    material="M330_50A",
-    mesh_yoke=0.005,
-    mesh_slot=0.002,
-)
+See [examples/single_geometry.md](examples/single_geometry.md) for full design
+rationale.
 
-result = generate_single(cfg, output_dir="output/single", formats="MSH|VTK|JSON")
-print(result)
+**Usage**
+
+```bash
+# Default run — 48 slots, 1400 laminations
+python examples/single_geometry.py
+
+# Custom output directory, skip visualisation
+python examples/single_geometry.py --output /tmp/my_stator --no-plot
+
+# Custom slot and lamination count
+python examples/single_geometry.py --slots 72 --lam 1600
 ```
 
-### Batch sweep for a genetic algorithm
+**CLI options**
 
-```python
-from stator_pipeline import StatorConfig, generate_batch
-import json
+| Flag | Default | Description |
+|---|---|---|
+| `--output PATH` | `/tmp/stator_single` | Directory for outputs |
+| `--no-plot` | off | Skip gmsh GUI and PNG export |
+| `--slots N` | `48` | Number of stator slots |
+| `--lam N` | `1400` | Number of laminations |
 
-# Parameter sweep: vary slot_depth and slot_width_outer
-population = [
-    StatorConfig(slot_depth=0.04 + i*0.004, slot_width_outer=0.010 + j*0.001)
-    for i in range(4) for j in range(4)
-]
+**Default geometry (no flags)**
 
-results = generate_batch(
-    population,
-    output_dir="output/sweep",
-    max_parallel=8,
-    formats="JSON",                        # metadata only — fast
-    skip_existing=True,                    # idempotent across GA generations
-    progress_callback=lambda d,t,ok,jid: print(f"{d}/{t} {jid}"),
-)
+| Parameter | Value |
+|---|---|
+| Outer radius | 650 mm |
+| Inner radius | 420 mm |
+| Air-gap | 3 mm |
+| Slots | 48 |
+| Slot depth | 115 mm |
+| Lamination thickness | 0.50 mm (M330-50A) |
+| Stack length | 700 mm (1400 × 0.5 mm) |
+| Insulation | 3 mm class-F groundwall |
 
-# Extract fitness proxy: avg_quality from the metadata JSON
-fitnesses = []
-for r in results:
-    if r["success"] and r["json_path"]:
-        with open(r["json_path"]) as f:
-            meta = json.load(f)
-        fitnesses.append(meta["mesh_stats"]["avg_quality"])
-    else:
-        fitnesses.append(0.0)
+**Expected console output**
 
-print("Best quality:", max(fitnesses))
+```
+Validating parameters …
+  OK
+
+==============================================================
+  STATOR GEOMETRY — VALIDATION REPORT
+==============================================================
+  Outer radius                      650.0 mm
+  Inner radius                      420.0 mm
+  Air-gap                             3.00 mm
+  Slots                                 48
+  Slot shape                    SEMI_CLOSED
+  Winding type                 DOUBLE_LAYER
+  Laminations                1400 × 0.500 mm
+  Material                        M330-50A
+--------------------------------------------------------------
+  Yoke height                       115.00 mm
+  Tooth width                        23.XXX mm
+  Slot pitch                           7.50 °  (0.1309 rad)
+  Stack length                        700.0 mm
+  Fill factor                         0.XXX  (XX.X %)
+--------------------------------------------------------------
+  Mesh — yoke                         20.00 mm
+  Mesh — slot                         10.00 mm
+  Mesh — coil                          6.00 mm
+  Mesh — insulation                    3.00 mm
+==============================================================
+
+Running pipeline …
+  Stem      : stator_XXXXXXXX
+  Metadata  : /tmp/stator_single/stator_XXXXXXXX_meta.json
+  SHA-256   : XXXXXXXXXXXXXXXXXXXX…
+
+Rendering 2-D cross-section …
+  Cross-section saved → /tmp/stator_single/stator_cross_section.png
+
+Rendering 3-D lamination stack …
+  Showing 8/1400 laminations  (t_lam=0.500 mm, vis stack ≈ 4.00 mm)
+  3-D stack saved → /tmp/stator_single/stator_3d_stack.png
+
+Done.  Output → /tmp/stator_single
 ```
 
-### Direct C++ usage
+**Output files**
 
-```cpp
-#include "stator/params.hpp"
-#include "stator/gmsh_backend.hpp"
-#include "stator/geometry_builder.hpp"
-#include "stator/topology_registry.hpp"
-#include "stator/mesh_generator.hpp"
-#include "stator/export_engine.hpp"
-
-using namespace stator;
-
-int main() {
-    // 1. Parameters
-    auto p = make_reference_params();   // already validated
-
-    // 2. Backend (real GMSH or stub)
-    auto backend = make_default_backend();
-
-    // 3. Geometry
-    backend->initialize("my_stator");
-    GeometryBuilder builder(backend.get());
-    auto geo = builder.build(p);
-    if (!geo.success) { /* handle error */ }
-
-    // 4. Topology
-    TopologyRegistry registry(p.n_slots);
-
-    // 5. Mesh
-    MeshGenerator mesher(backend.get());
-    auto mesh = mesher.generate(p, geo, registry);
-
-    // 6. Export
-    ExportConfig cfg;
-    cfg.output_dir = "/tmp/stator_out";
-    cfg.formats    = ExportFormat::MSH | ExportFormat::JSON;
-    ExportEngine exporter(backend.get());
-    auto results = exporter.write_all_sync(p, mesh, cfg);
-
-    backend->finalize();
-    return mesh.success ? 0 : 1;
-}
-```
+| File | Description |
+|---|---|
+| `stator_XXXXXXXX_meta.json` | Full parameter set + derived geometry + mesh statistics |
+| `stator_cross_section.png` | 2-D cross-section coloured by region (yoke, phases A/B/C, insulation) |
+| `stator_3d_stack.png` | Isometric 3-D view of up to 8 laminations with semi-transparent yoke |
 
 ---
 
-### 3-D lamination stack extrusion
+### batch_scheduler.py
 
-The pipeline extends the 2-D cross-section into a full 3-D solid by sweeping the mesh through `n_lam` lamination layers. Set `n_lam > 1` in `StatorParams` and configure `MeshConfig::layers_per_lam` to control the axial element density.
+Runs a 5 × 3 parameter sweep over slot count and lamination count (15 jobs
+total) with a live progress bar and optional matplotlib summary chart.
 
-#### C++
+**Usage**
 
-```cpp
-#include "stator/params.hpp"
-#include "stator/gmsh_backend.hpp"
-#include "stator/geometry_builder.hpp"
-#include "stator/topology_registry.hpp"
-#include "stator/mesh_generator.hpp"
-#include "stator/export_engine.hpp"
+```bash
+# Full run — generate all 15 geometries
+python examples/batch_scheduler.py
 
-using namespace stator;
+# Validate only, skip generation
+python examples/batch_scheduler.py --dry-run
 
-int main() {
-    // 1. Parameters — 36-slot SEMI_CLOSED DOUBLE_LAYER, 200-lamination stack
-    StatorParams p;
-    p.R_outer    = 0.25;
-    p.R_inner    = 0.15;
-    p.n_slots    = 36;
-    p.slot_shape = SlotShape::SEMI_CLOSED;
-    p.winding_type = WindingType::DOUBLE_LAYER;
-
-    // Lamination stack: 200 × 0.35 mm sheets, no inter-lamination gap
-    p.n_lam    = 200;
-    p.t_lam    = 0.00035;       // 0.35 mm per sheet
-    p.z_spacing = 0.0;           // sheets are pressed flush
-    p.material = LaminationMaterial::M270_35A;
-
-    p.validate_and_derive();
-    // p.stack_length is now 200 * 0.00035 = 0.07 m
-
-    // 2. Backend
-    auto backend = make_default_backend();
-    backend->initialize("stator_3d");
-
-    // 3. Geometry (2-D cross-section)
-    GeometryBuilder builder(backend.get());
-    auto geo = builder.build(p);
-    if (!geo.success) {
-        std::cerr << "Geometry error: " << geo.error_message << "\n";
-        return 1;
-    }
-
-    // 4. Topology
-    TopologyRegistry registry(p.n_slots);
-
-    // 5. Mesh — 3-D extrusion via MeshConfig
-    MeshConfig mc;
-    mc.algorithm_2d   = 5;   // Delaunay 2-D
-    mc.algorithm_3d   = 10;  // HXT (fast 3-D Delaunay)
-    mc.layers_per_lam = 2;   // 2 element layers per 0.35 mm lamination
-    mc.smoothing_passes = 3;
-
-    MeshGenerator mesher(backend.get(), mc);
-    auto mesh = mesher.generate(p, geo, registry);
-    if (!mesh.success) {
-        std::cerr << "Mesh error: " << mesh.error_message << "\n";
-        return 1;
-    }
-    std::cout << "3-D nodes: "    << mesh.n_nodes       << "\n"
-              << "2-D elements: " << mesh.n_elements_2d << "\n"
-              << "3-D elements: " << mesh.n_elements_3d << "\n"
-              << "Avg quality:  " << mesh.avg_quality   << "\n";
-
-    // 6. Export — MSH v4, VTK (for ParaView), JSON metadata
-    ExportConfig cfg;
-    cfg.output_dir  = "/tmp/stator_3d";
-    cfg.formats     = ExportFormat::MSH | ExportFormat::VTK | ExportFormat::JSON;
-    cfg.msh_version = 4;
-
-    ExportEngine exporter(backend.get());
-    auto results = exporter.write_all_sync(p, mesh, cfg);
-    for (auto& r : results)
-        if (r.success)
-            std::cout << "Wrote: " << r.path << "\n";
-        else
-            std::cerr << "Export failed: " << r.error_message << "\n";
-
-    backend->finalize();
-    return mesh.success ? 0 : 1;
-}
+# Custom output, skip chart
+python examples/batch_scheduler.py --output /tmp/sweep --no-plot
 ```
 
-**Key points:**
+**CLI options**
 
-| Parameter | Effect |
-|-----------|--------|
-| `n_lam = 200` | Sweep produces 200 lamination layers along Z |
-| `t_lam = 0.00035` | Each sheet is 0.35 mm thick; `stack_length = n_lam * t_lam` |
-| `z_spacing = 0.0` | No axial gap between sheets (set to insulation coating thickness for realistic models) |
-| `mc.layers_per_lam = 2` | 2 prism/hex element rows per lamination → 400 axial element layers total |
-| `mc.algorithm_3d = 10` | HXT algorithm — fastest for large 3-D tetrahedral meshes |
-| `ExportFormat::VTK` | Produces a `.vtk` file readable by ParaView and pyvista |
+| Flag | Default | Description |
+|---|---|---|
+| `--output PATH` | `/tmp/stator_batch` | Directory for all job outputs |
+| `--no-plot` | off | Skip matplotlib sweep chart |
+| `--dry-run` | off | Validate all configs only; skip generation |
 
-#### Python
+**Parameter sweep**
 
-```python
-from stator_pipeline import StatorConfig, generate_single
-from stator_pipeline.visualiser import StatorVisualiser
+| Axis | Values |
+|---|---|
+| Slot counts | 24, 36, 48, 60, 72 |
+| Lamination counts | 100, 200, 400 |
+| Total jobs | 15 |
 
-# ── 1. Configure a 3-D laminated stator ──────────────────────────────────────
-cfg = StatorConfig(
-    # Cross-section geometry
-    R_outer         = 0.25,
-    R_inner         = 0.15,
-    n_slots         = 36,
-    slot_shape      = "SEMI_CLOSED",
-    winding_type    = "DOUBLE_LAYER",
-    slot_depth      = 0.06,
-    slot_width_outer= 0.012,
-    slot_width_inner= 0.010,
-    slot_opening    = 0.004,
-    slot_opening_depth = 0.003,
+Winding type and slot shape are assigned per slot count:
 
-    # Lamination stack (triggers 3-D extrusion)
-    n_lam    = 200,         # 200 sheets → stack_length = 0.07 m
-    t_lam    = 0.00035,     # 0.35 mm per lamination
-    z_spacing = 0.0,        # pressed flush (no inter-lamination gap)
-    material = "M270_35A",
+| Slots | Winding | Shape |
+|---|---|---|
+| 24 | `CONCENTRATED` | `RECTANGULAR` |
+| 36 | `DOUBLE_LAYER` | `SEMI_CLOSED` |
+| 48 | `DOUBLE_LAYER` | `SEMI_CLOSED` |
+| 60 | `DISTRIBUTED` | `TRAPEZOIDAL` |
+| 72 | `DISTRIBUTED` | `TRAPEZOIDAL` |
 
-    # Mesh sizing
-    mesh_yoke  = 0.006,
-    mesh_slot  = 0.003,
-    mesh_coil  = 0.0015,
-    mesh_ins   = 0.0007,
-    mesh_boundary_layers = 3,
-)
+**Expected console output**
 
-# ── 2. Generate mesh (MSH + VTK + JSON) ──────────────────────────────────────
-result = generate_single(
-    cfg,
-    output_dir = "/tmp/stator_3d",
-    formats    = "MSH|VTK|JSON",
-)
+```
+Building parameter sweep …  15 jobs
 
-if not result["success"]:
-    raise RuntimeError(f"Pipeline failed: {result['error']}")
+Validating all configurations …
+  s24_lam100  OK
+  s24_lam200  OK
+  ...
+  s72_lam400  OK
 
-print(f"MSH  : {result['msh_path']}")
-print(f"VTK  : {result['vtk_path']}")
-print(f"JSON : {result['json_path']}")
+Running batch …
+[████████████████████████████] 100.0%  15/15  eta 0s  (s72_lam400)
 
-import json
-with open(result["json_path"]) as f:
-    meta = json.load(f)
-stats = meta["mesh_stats"]
-print(f"Nodes      : {stats['n_nodes']}")
-print(f"2-D elems  : {stats['n_elements_2d']}")
-print(f"3-D elems  : {stats['n_elements_3d']}")
-print(f"Avg quality: {stats['avg_quality']:.3f}")
+JOB_ID        SLOTS  LAM  FILL%  STACK mm  YOKE mm  OK
+s24_lam100       24  100   XX.X      35.0     XX.X   ✓
+s24_lam200       24  200   XX.X      70.0     XX.X   ✓
+s24_lam400       24  400   XX.X     140.0     XX.X   ✓
+s36_lam100       36  100   XX.X      35.0     XX.X   ✓
+...
+s72_lam400       72  400   XX.X     140.0     XX.X   ✓
 
-# ── 3. Visualise cross-section (matplotlib, 2-D slice) ───────────────────────
-vis = StatorVisualiser()
-vis.plot_cross_section(result["vtk_path"], output_png="/tmp/stator_3d_section.png")
-
-# ── 4. Visualise full 3-D volume (pyvista) ───────────────────────────────────
-try:
-    import pyvista as pv
-
-    grid = pv.read(result["vtk_path"])
-
-    # Colour cells by region type (physical group tag stored as scalar)
-    plotter = pv.Plotter()
-    plotter.add_mesh(
-        grid,
-        scalars    = grid.cell_data.keys()[0],  # first scalar = RegionType tag
-        cmap       = "tab20",
-        show_edges = False,
-        opacity    = 0.9,
-    )
-    plotter.add_scalar_bar("Region tag")
-    plotter.show_axes()
-    plotter.show(title="Stator — 3-D lamination stack")
-
-except ImportError:
-    print("pyvista not installed; skipping interactive 3-D view.")
-    print("Install with:  pip install pyvista")
+Batch summary → /tmp/stator_batch/batch_summary.json
+Sweep chart   → /tmp/stator_batch/batch_sweep_chart.png
 ```
 
-**3-D visualisation options:**
+**Output files**
 
-| Tool | Install | Usage |
-|------|---------|-------|
-| **pyvista** | `pip install pyvista` | Interactive 3-D viewer in Python; reads `.vtk` directly |
-| **ParaView** | [paraview.org](https://www.paraview.org) | GUI viewer; open the `.vtk` or `.msh` file |
-| **GMSH GUI** | Built-in when `STATOR_WITH_GMSH=ON` | `gmsh /tmp/stator_3d/stator_<hash>.msh` |
-| **matplotlib** | `pip install matplotlib` | 2-D cross-section slice via `StatorVisualiser.plot_cross_section()` |
+| File | Description |
+|---|---|
+| `batch_summary.json` | Array of all 15 job results (success, stem, paths, derived fields) |
+| `batch_sweep_chart.png` | Two-panel chart: fill factor vs slot count; yoke height vs slot count |
+| `stator_XXXXXXXX_meta.json` × 15 | Per-job metadata |
+
+**Sweep chart panels**
+
+- **Panel 1** — Fill factor (%) vs slot count.  One line per lamination count.
+  Shows how slot geometry changes with slot count for a fixed radial envelope.
+- **Panel 2** — Yoke height (mm) vs slot count.  Scatter plot coloured by
+  lamination count.  Illustrates trade-off between slot depth and back-iron.
+
+---
+
+## Tests
+
+```bash
+# Install dev dependencies then run the full suite
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+The test suite covers ~140 cases across all modules:
+
+| Test class | Scope |
+|---|---|
+| `TestParams` | Default construction, field values, enum members |
+| `TestValidation` | All 15 geometric constraint rules (pass and fail) |
+| `TestDerivedFields` | Derived field formulas |
+| `TestSlotShapes` | All four slot shapes produce valid params |
+| `TestWindingTypes` | All four winding types validate |
+| `TestMaterials` | All material grades including CUSTOM with/without file |
+| `TestSHA256` | Known-answer hash tests, determinism, output format |
+| `TestGmshBackend` | StubGmshBackend tag counters, booleans, physical groups |
+| `TestGeometryBuilder` | All shapes, single/double-layer, slot count, tag assignment |
+| `TestTopologyRegistry` | Registration, winding assignment, thread safety (6 threads × 6 slots) |
+| `TestMeshGenerator` | Successful generation, graceful failure on bad geometry |
+| `TestExportEngine` | Stem determinism, JSON structure |
+| `TestPipeline` | validate_config, generate_single, generate_batch, progress callback |
+| `TestPublicAPI` | All expected names present in `__all__` |
+
+**Expected output (abridged)**
+
+```
+========================= test session starts ==========================
+platform linux -- Python 3.12.x, pytest-8.x.x
+collected 140 items
+
+tests/test_stator.py::TestParams::test_default_construction    PASSED
+tests/test_stator.py::TestParams::test_all_enums               PASSED
+tests/test_stator.py::TestValidation::test_valid_default        PASSED
+tests/test_stator.py::TestValidation::test_rule7_coil_depth    PASSED
+...
+tests/test_stator.py::TestPipeline::test_generate_batch_progress_callback PASSED
+
+========================= 140 passed in X.XXs ==========================
+```

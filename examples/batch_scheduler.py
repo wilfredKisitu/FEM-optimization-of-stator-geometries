@@ -21,12 +21,12 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import stator_pipeline as sp
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# CLI 
 
 def _args():
     p = argparse.ArgumentParser(description="Batch scheduler parameter sweep")
@@ -39,7 +39,7 @@ def _args():
     return p.parse_args()
 
 
-# ── Parameter sweep definition ────────────────────────────────────────────────
+# Parameter sweep definition
 
 SLOT_COUNTS       = [24, 36, 48, 60, 72]    # 5 different slot counts
 LAMINATION_COUNTS = [100, 200, 400]          # 3 stack depths → 15 jobs total
@@ -106,7 +106,7 @@ def make_sweep() -> list[tuple[str, sp.StatorConfig]]:
     return jobs
 
 
-# ── Progress callback ─────────────────────────────────────────────────────────
+# Progress callback
 
 class ProgressBar:
     def __init__(self, total: int):
@@ -129,7 +129,7 @@ class ProgressBar:
             print()
 
 
-# ── Validation pass ───────────────────────────────────────────────────────────
+# Validation pass 
 
 def validate_all(jobs: list[tuple[str, sp.StatorConfig]]) -> list[dict]:
     print(f"\nValidating {len(jobs)} configurations …")
@@ -146,7 +146,7 @@ def validate_all(jobs: list[tuple[str, sp.StatorConfig]]) -> list[dict]:
     return rows
 
 
-# ── Summary table ─────────────────────────────────────────────────────────────
+# Summary table 
 
 def print_summary(rows: list[dict], results: list[dict]) -> None:
     print("\n" + "=" * 80)
@@ -172,7 +172,7 @@ def print_summary(rows: list[dict], results: list[dict]) -> None:
     print("=" * 80)
 
 
-# ── Matplotlib chart ──────────────────────────────────────────────────────────
+# Matplotlib chart 
 
 def plot_sweep(rows: list[dict], output_dir: str) -> None:
     try:
@@ -201,7 +201,7 @@ def plot_sweep(rows: list[dict], output_dir: str) -> None:
 
     colours = cm.viridis(np.linspace(0.2, 0.85, len(lam_groups)))
 
-    # ── Left: fill factor vs slot count ──────────────────────────────────────
+    #  Left: fill factor vs slot count 
     ax = axes[0]
     for (lam, g), col in zip(sorted(lam_groups.items()), colours):
         ax.plot(g["slots"], g["fill"], "o-", color=col,
@@ -213,7 +213,7 @@ def plot_sweep(rows: list[dict], output_dir: str) -> None:
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.set_xticks(SLOT_COUNTS)
 
-    # ── Right: yoke height vs slot count ─────────────────────────────────────
+    #  Right: yoke height vs slot count
     ax = axes[1]
     for (lam, g), col in zip(sorted(lam_groups.items()), colours):
         ax.plot(g["slots"], g["yoke"], "s--", color=col,
@@ -231,11 +231,10 @@ def plot_sweep(rows: list[dict], output_dir: str) -> None:
     png = os.path.join(output_dir, "batch_sweep_chart.png")
     plt.savefig(png, dpi=150, bbox_inches="tight")
     print(f"\n  Chart saved → {png}")
-    plt.show()
     plt.close(fig)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+#  Main
 
 def main():
     args = _args()

@@ -1,1 +1,0 @@
-/usr/bin/cc CMakeFiles/test_stator_c.dir/tests/test_stator.c.o -o test_stator_c  -Wl,-rpath,/home/wilfred/analytica/FEM/build libstator_c_core.so -lm -lpthread 

@@ -1,1 +1,0 @@
-/usr/bin/cc CMakeFiles/single_geometry_c.dir/examples/single_geometry_c.c.o -o single_geometry_c  -Wl,-rpath,/home/wilfred/analytica/FEM/build libstator_c_core.so -lm -lpthread 

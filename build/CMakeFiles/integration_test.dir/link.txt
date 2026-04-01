@@ -1,1 +1,0 @@
-/usr/bin/cc CMakeFiles/integration_test.dir/tests/integration_test.c.o -o integration_test  /usr/lib/x86_64-linux-gnu/libgmsh.so -lm 
