@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fea_pipeline"
+version = "0.1.0"
+description = "Multi-physics FEA pipeline for stator geometry analysis"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+io = [
+    "meshio>=5.3",
+    "h5py>=3.10",
+    "pydantic>=2.6",
+]
+vis = [
+    "matplotlib>=3.8",
+    "pyvista>=0.43",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fea_pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_benchmark*.py"]
+python_functions = ["test_*"]
