@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: fea_pipeline
+Version: 0.1.0
+Summary: Multi-physics FEA pipeline for stator geometry analysis
+Requires-Python: >=3.10
+Requires-Dist: numpy>=1.26
+Requires-Dist: scipy>=1.12
+Requires-Dist: pyyaml>=6.0
+Provides-Extra: io
+Requires-Dist: meshio>=5.3; extra == "io"
+Requires-Dist: h5py>=3.10; extra == "io"
+Requires-Dist: pydantic>=2.6; extra == "io"
+Provides-Extra: vis
+Requires-Dist: matplotlib>=3.8; extra == "vis"
+Requires-Dist: pyvista>=0.43; extra == "vis"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"

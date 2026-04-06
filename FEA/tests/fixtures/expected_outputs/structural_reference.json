@@ -1,0 +1,13 @@
+{
+  "description": "Expected output ranges for 6-slot test stator structural analysis",
+  "stator_id": "test_simple",
+  "constraints": {
+    "max_von_mises_Pa":    {"min": 0.0,  "max": 1.0e12},
+    "max_displacement_m":  {"min": 0.0,  "max": 1.0},
+    "safety_factor":       {"min": 0.0,  "max": 1.0e10},
+    "fatigue_life_cycles": {"min": 0.0,  "max": 1.0e15},
+    "u_field_length":      {"equals_2_n_nodes": true},
+    "von_mises_length":    {"equals_n_elements": true},
+    "natural_frequencies_Hz": {"all_non_negative": true}
+  }
+}

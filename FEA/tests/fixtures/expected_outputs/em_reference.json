@@ -1,0 +1,14 @@
+{
+  "description": "Expected output ranges for 6-slot test stator EM analysis",
+  "stator_id": "test_simple",
+  "constraints": {
+    "total_loss_W":        {"min": 0.0,  "max": 1.0e6},
+    "efficiency":          {"min": 0.01, "max": 0.9999},
+    "torque_Nm":           {"min": -1e6, "max": 1e6},
+    "iron_loss_W":         {"min": 0.0,  "max": 1.0e6},
+    "copper_loss_W":       {"min": 0.0,  "max": 1.0e6},
+    "A_field_length":      {"equals_n_nodes": true},
+    "B_field_has_keys":    ["B_x", "B_y", "B_mag"],
+    "loss_density_length": {"equals_n_elements": true}
+  }
+}

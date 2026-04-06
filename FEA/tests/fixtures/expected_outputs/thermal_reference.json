@@ -1,0 +1,12 @@
+{
+  "description": "Expected output ranges for 6-slot test stator thermal analysis",
+  "stator_id": "test_simple",
+  "constraints": {
+    "peak_temperature_K":             {"min": 293.15, "max": 1000.0},
+    "winding_average_temperature_K":  {"min": 293.15, "max": 1000.0},
+    "thermal_margin_K":               {"type": "finite"},
+    "T_field_length":                 {"equals_n_nodes": true},
+    "T_field_all_finite":             true,
+    "T_field_all_positive":           true
+  }
+}

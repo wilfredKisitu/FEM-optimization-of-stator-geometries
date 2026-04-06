@@ -44,21 +44,14 @@ def apply_dirichlet_bcs(
     K_mod : csr_matrix
     F_mod : np.ndarray
     """
-    K_mod = K.tolil()           # lil_matrix supports efficient row slicing
+    K_mod = K.tolil()
     F_mod = F.copy()
 
     for node, val in zip(bc_nodes, bc_values):
-        # Adjust load vector for coupled DOFs before zeroing the row so that
-        # non-BC nodes see the correct contribution:
-        #   F_mod[other] -= K[other, node] * val
-        # Retrieve the column as lil (already lil_matrix), then iterate.
-        col_lil = K_mod.getcol(node).tolil()
-        # col_lil is (n_nodes × 1); iterate over its row data
-        for r, row_data in enumerate(col_lil.data):
-            if row_data and r != node:
-                F_mod[r] -= row_data[0] * val
-
-        # Zero out the row and set diagonal to 1
+        # Zero the row, set diagonal to 1, prescribe the BC value.
+        # Non-BC rows keep K[i, node] non-zero; solving produces u[node]=val
+        # which is included automatically in the off-diagonal sum K[i,node]*val.
+        # (Adjusting F AND keeping K[i,node] would double-count the contribution.)
         K_mod[node, :] = 0.0
         K_mod[node, node] = 1.0
         F_mod[node] = val
