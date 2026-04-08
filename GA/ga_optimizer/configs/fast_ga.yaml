@@ -1,0 +1,41 @@
+# fast_ga.yaml — Reduced settings for CI testing and quick validation runs
+random_seed: 0
+log_level: "INFO"
+
+population_size: 10
+parallel_workers: 1          # Serial for CI reproducibility
+
+operators:
+  eta_c: 15.0
+  eta_m: 20.0
+  p_crossover: 1.0
+
+termination:
+  max_generations: 3
+  max_evaluations: 40
+  stagnation_window: 3
+  hypervolume_stagnation_tolerance: 1.0e-4
+  target_hypervolume: null
+
+hypervolume_reference_point: [0.0, 5000.0, 0.0]
+
+constraints:
+  min_air_gap_m: 0.0008
+  min_slot_width_m: 0.003
+  min_yoke_height_m: 0.008
+  max_winding_temperature_K: 428.15
+  min_safety_factor: 1.5
+
+operating_point:
+  current_A: 50.0
+  speed_rpm: 3000.0
+  torque_Nm: 50.0
+  voltage_V: 400.0
+
+materials:
+  stator_core: "M250-35A"
+  winding: "copper_class_F"
+  air_gap: "air"
+
+checkpoint_every_n_generations: 2
+seed_designs: null

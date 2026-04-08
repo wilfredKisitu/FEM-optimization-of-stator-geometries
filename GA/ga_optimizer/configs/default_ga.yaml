@@ -1,0 +1,51 @@
+random_seed: 42
+log_level: "INFO"
+
+# Population budget
+population_size: 100
+parallel_workers: 4          # joblib workers for parallel FEA evaluation
+
+# NSGA-II operator parameters
+operators:
+  eta_c: 15.0                # SBX distribution index (higher = tighter offspring)
+  eta_m: 20.0                # Polynomial mutation distribution index
+  p_crossover: 1.0           # Probability of applying SBX per pair
+
+# Termination conditions
+termination:
+  max_generations: 100
+  max_evaluations: 8000
+  stagnation_window: 15      # Generations without HV improvement → terminate
+  hypervolume_stagnation_tolerance: 1.0e-4
+  target_hypervolume: null   # Set to a float to terminate when HV is reached
+
+# Hypervolume reference point (must dominate all feasible solutions)
+# [neg_efficiency=0 → 0% eff, total_loss=5000W, neg_power_density=0]
+hypervolume_reference_point: [0.0, 5000.0, 0.0]
+
+# Geometric and physical constraint bounds
+constraints:
+  min_air_gap_m: 0.0008          # 0.8 mm minimum air gap
+  min_slot_width_m: 0.003        # 3 mm minimum slot width
+  min_yoke_height_m: 0.008       # 8 mm minimum yoke height
+  max_winding_temperature_K: 428.15   # 155 °C — class-F insulation limit
+  min_safety_factor: 1.5
+
+# Operating point (same for all individuals in this run)
+operating_point:
+  current_A: 80.0
+  speed_rpm: 3000.0
+  torque_Nm: 120.0
+  voltage_V: 400.0
+
+# Material assignments passed to StatorMeshInput
+materials:
+  stator_core: "M250-35A"
+  winding: "copper_class_F"
+  air_gap: "air"
+
+# Checkpoint interval
+checkpoint_every_n_generations: 10
+
+# Optional seed designs (list of gene vectors, each of length 12)
+seed_designs: null
